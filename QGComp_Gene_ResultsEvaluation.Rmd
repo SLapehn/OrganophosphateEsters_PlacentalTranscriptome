@@ -1,0 +1,252 @@
+---
+title: "QGComp_Results_May2024"
+author: "Samantha Lapehn"
+date: "2024-05-27"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## QGComp Results Evaluation - May2024
+
+Here I am uploading the results to evaluate genes with marginal significance (p<0.001) since none of the results passed the threshold of FDR<0.1. 
+
+
+### Load Packages
+```{r load packages}
+require(tidyverse)                  
+require(qgcomp)                    
+require(data.table) 
+library(pheatmap)
+library(RColorBrewer)
+
+source("/active/paquette_a/QGComp_sif/EWAS_QGComp Code from Dennis/EWAS_QGComp_Functions_Update3.R")   
+```
+
+### Load Results
+```{r load Results}
+FullResults <-read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/OPEQGComp_Evan_2024/BootstrapResults_FullDataset_FDR_crctd_03202024.csv")
+
+MaleResults <-read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/OPEQGComp_Evan_2024/BootstrapResults_MaleStratified_FDR_crctd_03202024.csv")
+
+FemaleResults <-read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/OPEQGComp_Evan_2024/BootstrapResults_FemaleStratified_FDR_crctd_03192024.csv")
+
+#Loading annotation file too
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_102023.RData")
+```
+
+### Filter results
+Filtering for genes with p<0.001 since none met the FDR<0.1 threshold
+```{r filter results}
+Sig_FullResults <- FullResults %>%
+  dplyr::filter(pval<0.001)
+
+Sig_MaleResults <- MaleResults %>%
+  dplyr::filter(pval<0.001)
+
+Sig_FemaleResults <- FemaleResults %>%
+  dplyr::filter(pval<0.001)
+
+## Add annotation of gene name to Sig Results
+
+Sig_FullResults <- inner_join(Sig_FullResults, annot, by=c("probeID"="ENSEMBL"))
+
+Sig_MaleResults <- inner_join(Sig_MaleResults, annot, by=c("probeID"="ENSEMBL"))
+```
+
+
+### Load Comparison Data
+Loading the following: 
+1) IndivGene_DEGs- this csv file contains the genes that were associated with individual OPE compounds with FDR<0.1 for both binary and continuous OPE analyses
+2) Loading a dataframe of WGCNA modules that were significantly associated with individual or mixture OPEs
+3) Loading full WGCNA results for gene/color annotation
+```{r Comparison Data}
+IndivGene_DEGs <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/Gene Results/IndivGenesResultsforComparison_May2024.csv")
+
+WGCNA_SigModules <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/WGCNA/WGCNAResults_forComparison_May2024.csv")
+
+load(file="/active/paquette_a/CANDLE_WGCNA/CANDLE_wide_WGCNA_ensembl.RData")
+
+```
+
+### Evaluate overlap with DEG Comparison Data
+No overlapping genes between QGComp (p<0.001) genes and individual OPE DEGs (FDR<0.1)
+```{r evaluate overlap}
+DEGs_vs_FullQGComp <- inner_join(Sig_FullResults, IndivGene_DEGs, by=c("probeID"="Ensembl.ID"))
+
+DEGs_vs_MaleQGComp <- inner_join(Sig_MaleResults, IndivGene_DEGs, by=c("probeID"="Ensembl.ID"))
+```
+
+### Evaluate overlap with WGCNA Comparison Data
+Evaluating if the genes associated with mixture OPEs (p<0.001) from the full and male models overlap with any of the WGCNA modules that were associated with individual or mixture OPEs. 
+```{r WGCNA comparison}
+#Pull names of module colors that were significantly associated with individual or mixture OPEs
+SigModuleColors <- WGCNA_SigModules$Module
+#Combine with gene annotation for those modules
+WGCNAgenes <-rownames(geneModuleMembership)
+gene_membership <- cbind(WGCNAgenes, moduleColors)
+gene_membershipDF <- data.frame(gene_membership)
+SigModuleGenes <- gene_membershipDF %>%
+  dplyr::filter(moduleColors %in% SigModuleColors)
+#Run overlap comparison with QGComp sig genes (p<0.001)
+WGCNA_vs_FullQGComp <- inner_join(Sig_FullResults, SigModuleGenes, by=c("probeID"="WGCNAgenes"))
+
+WGCNA_vs_MaleQGComp <- inner_join(Sig_MaleResults, SigModuleGenes, by=c("probeID"="WGCNAgenes"))
+```
+
+
+### Load full QGComp results objects
+Loading results for the full and male analyses (not female since no p<0.001 genes)
+```{r load full results object}
+load(file="/active/paquette_a/QGComp_sif/CodeforInterpretation_and_FDRAdjustment/MaleStratified/Male_BootstrapResults_03192024.RData")
+MaleResultsObject <- ewas_qgcomp_fit.boot
+
+FullResultsObject <- load(file="/active/paquette_a/QGComp_sif/CodeforInterpretation_and_FDRAdjustment/QGComp_Output_Files/BootstrapResults_FullDataset_03202024.RData")
+FullResultsObject <- ewas_qgcomp_fit.boot
+```
+
+### Pull Component Effects 
+Need to collapse nested lists into dataframes first then pull the CE object
+```{r pull CE}
+MaleCollapse <-tibble(MaleResultsObject)  %>% 
+      unnest_wider(MaleResultsObject)
+FullCollapse <-tibble(FullResultsObject)  %>% 
+      unnest_wider(FullResultsObject)
+#Make Component Effects Data Frame
+MaleCollapse_CE <- MaleCollapse$component_effects
+MaleCE <-as.data.frame(do.call(rbind, lapply(MaleCollapse_CE, as.data.frame)))
+
+FullCollapse_CE <- FullCollapse$component_effects
+FullCE <-as.data.frame(do.call(rbind, lapply(FullCollapse_CE, as.data.frame)))
+
+```
+
+### Evaluate CE for Sig Genes
+```{r Evaluate CE}
+#Full DAta Analysis
+SigFullGenes <- Sig_FullResults$probeID
+Sig_FullCE <- FullCE %>%
+  dplyr::filter(probeID %in% SigFullGenes)
+Full_sumCE <- aggregate(weight~probeID,Sig_FullCE,sum)
+
+#Male Data Analysis
+SigMaleGenes <- Sig_MaleResults$probeID
+Sig_MaleCE <- MaleCE %>%
+  dplyr::filter(probeID %in% SigMaleGenes)
+Male_sumCE <- aggregate(weight~probeID,Sig_MaleCE,sum)
+```
+
+### Join Module Membership to CE
+```{r module membership join}
+Full_Sig_CE_ModMem <- full_join(WGCNA_vs_FullQGComp, Full_sumCE, by="probeID")
+Full_Sig_CE_ModMem$moduleColors <- paste0(Full_Sig_CE_ModMem$moduleColors, "_All")
+Male_Sig_CE_ModMem <- full_join(WGCNA_vs_MaleQGComp, Male_sumCE, by="probeID")
+Male_Sig_CE_ModMem$moduleColors <- paste0(Male_Sig_CE_ModMem$moduleColors, "_Male")
+```
+
+### Add column specifying model type
+```{r}
+Malevec <-replicate(36, "Male")
+Fullvec <- replicate(6, "All")
+Full_Sig_CE_ModMem$Model <-Fullvec
+Male_Sig_CE_ModMem$Model <-Malevec
+Full_Sig_CE_ModMem <- Full_Sig_CE_ModMem %>%
+  dplyr::select(-X)
+```
+
+### Combine all sig results into one dataframe
+```{r combine male and full}
+Male_Full_Sig <- rbind(Full_Sig_CE_ModMem, Male_Sig_CE_ModMem)
+```
+
+### Write results CSV to rearrange for figure
+```{r write results}
+#write.csv(Male_Full_Sig, "/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/OPEQGComp_Evan_2024/Male_Full_SigGenesSummary_052924.csv")
+```
+
+### Reload the results data rearranged for the figure
+```{r reload data rearranged}
+Heatmapinput <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/OPEQGComp_Evan_2024/QGComp_IndivGene_HeatmapInput_053024.csv")
+rownames(Heatmapinput) <- Heatmapinput$X
+Heatmapinput <- Heatmapinput %>%
+  dplyr::select(-X)
+```
+
+### Prepare additional heatmap input
+```{r heatmap input}
+colors <- rev(brewer.pal(11, "RdBu"))
+
+# Annotation
+Sex <- c("All", "Male", "All", "Male","Male", "Male", "Male", "Male", "Male", "Male", "Male", "Male")
+
+Module <-c("grey", "grey", "greenyellow", "greenyellow", "blue", "brown", "cyan", "darkred", "plum1", "royalblue", "turquoise", "yellow")
+
+Annotation<- data.frame("Sex"=Sex, "Module"=Module)
+rownames(Annotation)<-rownames(Heatmapinput)
+
+annotation_colors = list(
+  Sex=c(All="Black",Female="deeppink",Male="Blue"),
+  Module=c(grey="gray41",  greenyellow="greenyellow",  blue="#0000FF", brown="brown", cyan="cyan", darkred="darkred", plum1="plum1", royalblue="royalblue", turquoise="turquoise", yellow="yellow"))
+
+```
+
+### Heatmap
+```{r heatmap}
+Breaks<-seq(-0.5,0.5, length.out=12)
+pheatmap(Heatmapinput,
+         color = colors,
+        breaks=Breaks,
+         scale='none',# unscaled data
+         na.color="grey",
+         cluster_rows =F,
+         cluster_cols=F,
+         na_col="grey",
+         cellwidth=10, #Change tehe for size
+         cellheight=20, #change these for siz
+         fontsize_col =12, 
+         fontsize_row=0.01,
+         annotation_row=Annotation, 
+         annotation_colors = annotation_colors)
+```
+
+### Hub Gene Analysis
+### Upload hub gene files of interest
+NOt uploading grey since that is the unassigned module
+```{r hub gene analysis}
+greenyellow_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/greenyellow_hubGenes.csv", header=FALSE)
+blue_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/blue_hubGenes.csv", header=FALSE)
+brown_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/brown_hubGenes.csv", header=FALSE)
+cyan_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/cyan_hubGenes.csv", header=FALSE)
+darkred_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/darkred_hubGenes.csv", header=FALSE)
+plum1_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/plum1_hubGenes.csv", header=FALSE)
+royalblue_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/royalblue_hubGenes.csv", header=FALSE)
+turquoise_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/turquoise_hubGenes.csv", header=FALSE)
+yellow_hub <-read.csv("/active/paquette_a/CANDLE_WGCNA/module_hubGenes/yellow_hubGenes.csv", header=FALSE)
+```
+
+### Check for overlap with module hubs
+```{r hub overlap}
+greenyellow_overlap <- inner_join(greenyellow_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+
+blue_overlap <- inner_join(blue_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+
+brown_overlap <- inner_join(brown_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+
+cyan_overlap <- inner_join(cyan_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+
+darkred_overlap <- inner_join(darkred_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+
+plum1_overlap <- inner_join(plum1_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+
+royalblue_overlap <- inner_join(royalblue_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+
+turquoise_overlap <- inner_join(turquoise_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+
+yellow_overlap <- inner_join(yellow_hub, Male_Full_Sig, by=c("V1"="SYMBOL"))
+```
+
+

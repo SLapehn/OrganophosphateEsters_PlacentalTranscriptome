@@ -1,0 +1,138 @@
+---
+title: "Female QGComp for WGCNA"
+author: "Samantha Lapehn"
+date: "2023-11-09"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Female Stratified- QGComp for OPE Data
+Using this code to run quantile g-based computation for OPE mixtures and the placental transcriptome using code shared by Dennis Khodsevich  https://github.com/D-Khodasevich/EWAS_QGComp
+
+### Load Packages and Functions
+```{r packages}
+library(tidyverse)
+library(qgcomp)
+library(data.table)
+library(edgeR)
+
+source("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/EWAS_QGComp Code from Dennis/EWAS_QGComp_Functions_Update3.R")
+```
+
+### Load Data
+Need covariates and exposure data, as well as WGCNA data.
+```{r load data}
+#contains MEs
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CANDLE_WGCNA_copy_110123/CANDLE_wide_WGCNA_symbol.RData")
+#Contains covariate and exposure data
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_Female_102323.RData")
+
+#Select only ME data for which there is OPE exposure data
+MEs_forOPE <- MEs %>%
+  dplyr::filter(row.names(MEs) %in% row.names(OPE_Data_Select_Ready_Female))
+
+```
+
+### Prepare Exposure Data
+Need to remove binary exposures so that only the continuous OPEs are included
+```{r prep exposure data}
+Mixture <- OPE_Data_Select_Ready_Female %>%
+  dplyr::select(log_dep, log_dbup_dibp, log_bcetp, log_bdcpp, log_dphp)
+Mixture$pathways_id <-rownames(Mixture)
+
+Xnm <- c("log_dep", "log_dbup_dibp", "log_bcetp", "log_bdcpp", "log_dphp")
+```
+
+### Prepare Covariate Data
+Need to remove any covariates that we aren't using
+```{r covar prep}
+Covariates_Selected <- Covariates_Female %>%
+  dplyr::select(pathways_id, opfr_sg, h_m_delivery_age, h_m_prepreg_bmi, h_m_race, h_m_enroll_educ, batches, cg_labor_type, h_del_method, h_m_alcohol_prenatal, Smoking_Composite, h_firstborn, h_gravidity)
+
+covars <- c("opfr_sg", "h_m_delivery_age", "h_m_prepreg_bmi", "h_m_race", "h_m_enroll_educ", "batches", "cg_labor_type", "h_del_method", "h_m_alcohol_prenatal", "Smoking_Composite", "h_firstborn", "h_gravidity")
+```
+
+### Combine Covariate and Exposure Data into Single dataframe
+```{r combine exposure and covar}
+Pheno <- inner_join(Covariates_Selected, Mixture, by=c("pathways_id"))
+rownames(Pheno) <- Pheno$pathways_id
+Pheno <- Pheno %>%
+  dplyr::select(-pathways_id)
+#Make sure certain covariates are indicated as factors
+Pheno$h_m_race <- as.factor(Pheno$h_m_race)
+Pheno$h_m_enroll_educ <- as.factor(Pheno$h_m_enroll_educ)
+Pheno$batches <- as.factor(Pheno$batches)
+Pheno$cg_labor_type <- as.factor(Pheno$cg_labor_type)
+Pheno$h_del_method<- as.factor(Pheno$h_del_method)
+Pheno$h_m_alcohol_prenatal <- as.factor(Pheno$h_m_alcohol_prenatal)
+Pheno$Smoking_Composite <- as.factor(Pheno$Smoking_Composite)
+Pheno$h_firstborn <- as.factor(Pheno$h_firstborn)
+Pheno$h_gravidity <- as.factor(Pheno$h_gravidity)
+
+#Check data types
+summary(Pheno)
+
+```
+
+### Prep Expression Data
+```{r expr prep}
+MEs_transpose <- t(MEs_forOPE)
+meth <- MEs_transpose
+```
+
+### Check that order of Expression and Pheno Data are the same
+```{r check order}
+check <- colnames(meth) == rownames(Pheno)
+sum(check)
+
+reorder <- match(rownames(Pheno), colnames(meth))
+meth_reorder <- meth[,reorder]
+
+check2 <- colnames(meth_reorder) == rownames(Pheno)
+sum(check2)
+```
+
+## Bootstrap EWAS QGComp
+will perform bootstrapping for all WGCNA modules
+
+### Run Bootstrap EWAS QGComp
+Two new parametes need to be set for bootstrap version: 
+
+Bval is the number of bootstraps to perform
+seedval is to set a seed for reproducibility
+
+```{r bootstrap}
+ewas_qgcomp_fit.boot <- ewas_qgcomp.boot(pheno = Pheno, meth = meth_reorder, 
+                           mix_comp = Xnm, covars = covars, mval_conversion=FALSE, 
+            qval=4, output_type="full", Bval=1000, seedval=1234)
+```
+
+### Save BS Results object
+```{r save BS}
+#save(ewas_qgcomp_fit.boot, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/EWAS_QGComp/Female_BoostrapResults_WGCNA_110923.RData")
+
+```
+
+### Pull Bootstrap Results
+No significant modules for Female QGComp
+```{r pull results BS}
+Results_BS <- ewas_qgcomp_fit.boot$results 
+
+Results_BS$FDR<-p.adjust(Results_BS$pval, method="BH", n=length(Results_BS$pval))
+Results_BS$Bonferroni <- p.adjust(Results_BS$pval, method="bonferroni", n=length(Results_BS$pval))
+
+Results_BS_Sig <- Results_BS %>%
+  dplyr::filter(pval<0.05)
+
+#Significant Modules (p<0.05)
+print(Results_BS_Sig$probeID)
+
+```
+
+
+

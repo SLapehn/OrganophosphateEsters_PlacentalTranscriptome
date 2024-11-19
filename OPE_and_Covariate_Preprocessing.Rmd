@@ -1,0 +1,501 @@
+---
+title: "OPE_and_Covariate_Preprocessing"
+author: "Samantha Lapehn"
+date: "2023-10-20"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## OPE and Covariate Preprocessing
+
+This code is related to the ECHO PATHWAYS project on orgranophosphate esters and the placental transcriptome in the CANDLE study. This code will perform exploratory analysis and preprocessing of the OPE exposure data and covariates. RNAseq preprocessing will be performed in a separate file. 
+
+Covariate and Exposure data was received from the ECHO PATHWAYS data team on June 15, 2023 as part of data request P0106. 
+
+OPE data was collected at M1, M2, or M3 visits for each individual, but are being assessed as a single dataset here.  
+
+### Load Packages
+```{r load packages}
+library(tidyverse)
+library(corrplot)
+library(stats)
+library(ggvenn)
+```
+
+### Load Data
+Will also load RNAseq data her since it contains the sequencing batch variable which needs formatted to be added to the covariates
+```{r load data}
+Exposure_and_Covariates <- read.csv("/Volumes/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/Data_received061523/p0106_data.csv")
+load(file="/Volumes/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CANDLE_RNAseq/candle_20200226.Rdata")
+
+OPE_LODs <- read.csv("/Volumes/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/Data_received061523/OPE_LODs.csv")
+```
+
+### Separate Covariate Data
+Gestational Age (h_birth_gestage) won't be included in our model, but including it so that it can be in the covariate table. 
+```{r pull covariates}
+Covariates_AllParticipants <- Exposure_and_Covariates %>%
+  dplyr::select(pathways_id, h_c_sex, h_firstborn,  h_birth_gestage, h_m_prepreg_bmi, h_m_race, h_m_enroll_educ, h_m_delivery_age, h_m_alcohol_prenatal, h_m_enroll_smoke, cg_labor_type, h_del_method, h_gravidity, h_placental_abrupt, cotinine_m1, cotinine_yn_m1, cotinine_lod_m1, cotinine_yn_m2)
+```
+
+### Separate Exposure Data
+```{r pull exposure data}
+Exposures_AllParticipants <- Exposure_and_Covariates %>%
+ dplyr::select(-cohort, -site, -h_c_sex, -h_firstborn, -h_birth_gestage, -h_m_prepreg_bmi, -h_m_race, -h_m_enroll_educ, -h_m_delivery_age, -h_m_alcohol_prenatal, -h_m_enroll_smoke, -cg_labor_type, -h_del_method, -h_gravidity, -h_placental_abrupt, -cotinine_m1, -cotinine_yn_m1, -cotinine_lod_m1, -cotinine_yn_m2, -child_birth_year)
+```
+
+### Batch Variable Preparation
+The batch variable that we want to use is batches$Analysis
+This is the variable that has been used in previous ECHO PATHWAYS analyses.
+```{r batch var prep}
+sample_id <- colnames(candle_lengthScaledTPM$counts)
+batches <- batches$Analysis
+batch_var <- data.frame(sample_id, batches)
+#check that they translated to the correct order in new DF
+check1 <- batch_var$sample_id == colnames(candle_lengthScaledTPM$counts)
+sum(check1)
+#order is correct- will use this dataframe to combine with the other covariates that will be used in the analysis
+```
+
+### Filter to include only participants with RNAseq data
+```{r RNAseq Filter}
+Covariates_RNAseqParticipants <- inner_join(Covariates_AllParticipants, batch_var, by=c("pathways_id"="sample_id"))
+
+Exposures_RNAseqParticipants <- Exposures_AllParticipants %>%
+  dplyr::filter(Exposures_AllParticipants$pathways_id %in% sample_id)
+```
+
+### Covariates- Remove NAs and partipants with exclusion criteria
+Exclusion criteria = placental abruption
+Also removing any participants with missing covariates
+```{r Covariates Remove NAs}
+Covariates_RNAseqParticipants_NoNAs <- na.omit(Covariates_RNAseqParticipants) 
+
+Covariates_Clean <- Covariates_RNAseqParticipants_NoNAs %>%
+  dplyr::filter(h_placental_abrupt==0)
+
+CompleteCovars <- Covariates_Clean$pathways_id
+
+#Next will update categorical variables to be factors for easier summarization
+Covariates_Clean$h_c_sex <- as.factor(Covariates_Clean$h_c_sex)
+Covariates_Clean$h_firstborn <- as.factor(Covariates_Clean$h_firstborn)
+Covariates_Clean$h_del_method <- as.factor(Covariates_Clean$h_del_method)
+Covariates_Clean$h_m_race <- as.factor(Covariates_Clean$h_m_race)
+Covariates_Clean$h_m_enroll_educ <- as.factor(Covariates_Clean$h_m_enroll_educ)
+Covariates_Clean$h_m_alcohol_prenatal <- as.factor(Covariates_Clean$h_m_alcohol_prenatal)
+Covariates_Clean$cg_labor_type <- as.factor(Covariates_Clean$cg_labor_type)
+Covariates_Clean$batches <- as.factor(Covariates_Clean$batches)
+
+```
+
+### Add OPFR Gestage Variables to Covariates
+OPFR_Gestage will be used as an interaction term, but will not be included as a confounding or precision variable.
+```{r Combine OPFR Gestage Variable}
+## Add OPFR Gestage Variables from exposure data
+OPFR_Gestage_DF <- Exposures_RNAseqParticipants %>%
+  dplyr::select(pathways_id, ofpr_gestage_m1, ofpr_gestage_m2)
+OPFR_Gestage_DF[is.na(OPFR_Gestage_DF)] <- 0
+OPFR_Gestage_DF$OPFR_Gestage <- OPFR_Gestage_DF$ofpr_gestage_m1 + OPFR_Gestage_DF$ofpr_gestage_m2
+
+## Combine with other covariates
+Covariates_Clean <- left_join(Covariates_Clean, OPFR_Gestage_DF, by=c("pathways_id")) %>%
+dplyr::select(-ofpr_gestage_m1, -ofpr_gestage_m2, -h_placental_abrupt)
+
+```
+
+### Create a composite smoking variable
+Using self-reported smoking and M1/M2 cotinine y/n variables to create a composite smoking variable where smoking will be designated if smoking is included at any of these three other variables. 
+```{r cotinine prep}
+Covariates_Clean$Smoking_Composite <-rowSums(Covariates_Clean[,c("h_m_enroll_smoke", "cotinine_yn_m1", "cotinine_yn_m2")])
+
+#If Smoking Composite is 0 then non-smoking, if >0 then smoking
+
+Covariates_Clean$Smoking_Composite<-recode(Covariates_Clean$Smoking_Composite, '0'="0", '1'="1", '2'="1", '3'="1")
+
+Covariates_Clean$Smoking_Composite <- as.factor(Covariates_Clean$Smoking_Composite)
+summary(Covariates_Clean$Smoking_Composite)
+
+```
+
+### Combine OPE Specific Gravity Variables
+We need to combine the M1 and M2 specific gravity variables into one variable since we are treated these separate timepoints together. There is no overlap of participants between M1 and M2. Specific gravity will be used to adjust OPEs as part of the model.
+```{r SG prep}
+#Create a dataframe with just the SG variables we need to use
+M1Participants <- OPFR_Gestage_DF %>%
+  dplyr::filter(ofpr_gestage_m1 >0) %>%
+  dplyr::select(pathways_id)
+
+M2Participants <- OPFR_Gestage_DF %>%
+  dplyr::filter(ofpr_gestage_m2 >0) %>%
+  dplyr::select(pathways_id)
+
+SG_DF <- Exposures_RNAseqParticipants %>% 
+  dplyr::select(pathways_id, ofpr_sg_m1, ofpr_sg_m2)
+
+#Use list of M1 and M2 participants to create separate SG dataframes then create new SG variable that will be combined based on participant study visit once re-combined
+
+SG_DF_M1participants <- SG_DF %>%
+  dplyr::filter(pathways_id %in% M1Participants$pathways_id)
+
+SG_DF_M1participants$opfr_sg <- SG_DF_M1participants$ofpr_sg_m1
+
+SG_DF_M2participants <- SG_DF %>%
+  dplyr::filter(pathways_id %in% M2Participants$pathways_id)
+
+SG_DF_M2participants$opfr_sg <- SG_DF_M2participants$ofpr_sg_m2
+
+#Combine SG measures back into single data frame
+
+SG_DF_New <- full_join(SG_DF_M1participants, SG_DF_M2participants) %>%
+  dplyr::select(-ofpr_sg_m1, -ofpr_sg_m2)
+
+# Add Specific Gravity to Clean Covariates
+Covariates_Clean <- inner_join(Covariates_Clean, SG_DF_New, by=c("pathways_id"))
+```
+
+### Prepare Covariate Summary Statistics
+Saving the covariate summary statistics to make the covariates tables.
+```{r prep covariate summary statistics}
+#Step 1: Summarize
+summary(Covariates_Clean)
+
+#Step 2: Save as a dataframe to use for making table
+Covar_Summary_DF <- data.frame(unclass(summary(Covariates_Clean)))
+
+#Step 3: Export dataframes to make summary tables
+#write.csv(Covar_Summary_DF, "/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/Covariate_Summaries/Covar_Summary_102023.csv")
+```
+
+### Combine M1 and M2 exposure variables
+Right now each OPE has two separate columns for M1 and M2 measurements. Need to combine these into a single column since there are no M1 and M2 overlaps
+```{r exposure combining}
+#First split data into a few dataframes
+Exposure_Binary_LOD_vars_M1 <- Exposures_RNAseqParticipants %>%
+  dplyr::select(pathways_id, dep_lod_m1, dprp_lod_m1, dbup_dibp_lod_m1, bboep_lod_m1, behp_lod_m1, bcetp_lod_m1, bcpp_lod_m1, bdcpp_lod_m1, dphp_lod_m1, bmpp_lod_m1)
+
+Exposure_Binary_LOD_vars_M2 <- Exposures_RNAseqParticipants %>%
+  dplyr::select(pathways_id, dep_lod_m2, dprp_lod_m2, dbup_dibp_lod_m2, bboep_lod_m2, behp_lod_m2, bcetp_lod_m2, bcpp_lod_m2, bdcpp_lod_m2, dphp_lod_m2, bmpp_lod_m2)
+
+LOD_colnames <- c("pathways_id", "dep_lod", "dprp_lod", "dbup_dibp_lod", "bboep_lod", "behp_lod", "bcetp_lod", "bcpp_lod", "bdcpp_lod", "dphp_lod", "bmpp_lod")
+
+colnames(Exposure_Binary_LOD_vars_M1) <- LOD_colnames
+colnames(Exposure_Binary_LOD_vars_M2) <- LOD_colnames
+#Remove participants with NA values
+Exposure_Binary_LOD_vars_M1 <- na.omit(Exposure_Binary_LOD_vars_M1)
+Exposure_Binary_LOD_vars_M2 <- na.omit(Exposure_Binary_LOD_vars_M2)
+Exposure_Binary_LOD_Combined <- rbind(Exposure_Binary_LOD_vars_M1, Exposure_Binary_LOD_vars_M2)
+Exposure_Binary_LOD_Combined_CompleteCovar <- Exposure_Binary_LOD_Combined %>%
+  dplyr::filter(pathways_id %in% Covariates_Clean$pathways_id)
+
+Exposures_ImputedConcentrations <- Exposures_RNAseqParticipants %>%
+  dplyr::select(pathways_id, dep_m1, dprp_m1, dbup_dibp_m1, bboep_m1, behp_m1, bcetp_m1, bcpp_m1, bdcpp_m1, dphp_m1, bmpp_m1, dep_m2, dprp_m2, dbup_dibp_m2, bboep_m2, behp_m2, bcetp_m2, bcpp_m2, bdcpp_m2, dphp_m2, bmpp_m2)
+
+#For the concentrations dataframe: 
+#1- Turn NAs to zeros - this will allow us to sum M1 and M2 (which have no overlap of participants)
+#2- For each OPE then sum the m1 and m2 columns to create a single column for that OPE
+#3- Create new dataframe that contains only the new m1 and m2 combined OPE concentration values
+Exposures_ImputedConcentrations[is.na(Exposures_ImputedConcentrations)] <- 0
+Exposures_ImputedConcentrations$dep <- Exposures_ImputedConcentrations$dep_m1 + Exposures_ImputedConcentrations$dep_m2
+Exposures_ImputedConcentrations$dprp <- Exposures_ImputedConcentrations$dprp_m1 + Exposures_ImputedConcentrations$dprp_m2
+Exposures_ImputedConcentrations$dbup_dibp <- Exposures_ImputedConcentrations$dbup_dibp_m1 + Exposures_ImputedConcentrations$dbup_dibp_m2
+Exposures_ImputedConcentrations$bboep <- Exposures_ImputedConcentrations$bboep_m1 + Exposures_ImputedConcentrations$bboep_m2
+Exposures_ImputedConcentrations$behp <- Exposures_ImputedConcentrations$behp_m1 + Exposures_ImputedConcentrations$behp_m2
+Exposures_ImputedConcentrations$bcetp <- Exposures_ImputedConcentrations$bcetp_m1 + Exposures_ImputedConcentrations$bcetp_m2
+Exposures_ImputedConcentrations$bcpp <- Exposures_ImputedConcentrations$bcpp_m1 + Exposures_ImputedConcentrations$bcpp_m2
+Exposures_ImputedConcentrations$bdcpp <- Exposures_ImputedConcentrations$bdcpp_m1 + Exposures_ImputedConcentrations$bdcpp_m2
+Exposures_ImputedConcentrations$dphp <- Exposures_ImputedConcentrations$dphp_m1 + Exposures_ImputedConcentrations$dphp_m2
+Exposures_ImputedConcentrations$bmpp <- Exposures_ImputedConcentrations$bmpp_m1 + Exposures_ImputedConcentrations$bmpp_m2
+
+Exposures_ImputedConcentrations_Combined <- Exposures_ImputedConcentrations %>%
+  dplyr::select(pathways_id, dep, dprp, dbup_dibp, bboep, behp, bcetp, bcpp, bdcpp, dphp, bmpp) %>% dplyr::filter(pathways_id != "c0000018") %>%
+  dplyr::filter(pathways_id != "c0000044") %>%
+  dplyr::filter(pathways_id != "c0005306")
+#removed three rows with missing exposure data for both m1 and m2 visits
+
+#Reduce the dataframe to only include participants with complete covariates
+Exposures_ImputedConcentrations_Combined_CompleteCovar <- Exposures_ImputedConcentrations_Combined %>%
+  dplyr::filter(pathways_id %in% Covariates_Clean$pathways_id)
+
+#Combine the LOD and concentrations values into one dataframe
+Combined_ExposureData_Complete <- inner_join(Exposures_ImputedConcentrations_Combined_CompleteCovar, Exposure_Binary_LOD_Combined_CompleteCovar, by=c("pathways_id"))
+
+```
+
+### Summarize OPE Concentrations
+Summarize and Save OPE concentrations to be used in a table
+```{r OPE Concentrations}
+#Change binary LOD variables into Factors 
+
+Combined_ExposureData_Complete$dep_lod <- as.factor(Combined_ExposureData_Complete$dep_lod)
+Combined_ExposureData_Complete$dprp_lod <- as.factor(Combined_ExposureData_Complete$dprp_lod) #This acronym is listed as dprp and dpro on different variables- Data team was notified
+Combined_ExposureData_Complete$dbup_dibp_lod <-as.factor(Combined_ExposureData_Complete$dbup_dibp_lod)
+Combined_ExposureData_Complete$bboep_lod <-as.factor(Combined_ExposureData_Complete$bboep_lod)
+Combined_ExposureData_Complete$behp_lod <-as.factor(Combined_ExposureData_Complete$behp_lod)
+Combined_ExposureData_Complete$bcetp_lod <-as.factor(Combined_ExposureData_Complete$bcetp_lod)
+Combined_ExposureData_Complete$bcpp_lod <-as.factor(Combined_ExposureData_Complete$bcpp_lod)
+Combined_ExposureData_Complete$bdcpp_lod <-as.factor(Combined_ExposureData_Complete$bdcpp_lod)
+Combined_ExposureData_Complete$dphp_lod <-as.factor(Combined_ExposureData_Complete$dphp_lod)
+Combined_ExposureData_Complete$bmpp_lod <-as.factor(Combined_ExposureData_Complete$bmpp_lod)
+
+#print summary of values
+summary(Combined_ExposureData_Complete)
+
+#save summary of values as data frame
+Exposure_Summary_DF <- data.frame(unclass(summary(Combined_ExposureData_Complete)))
+
+#export summary of values to create manuscript table
+#write.csv(Exposure_Summary_DF, "/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/OPE_Exposure_Summary_102023.csv")
+
+```
+
+
+### Log Transform and Plot all exposures
+Using the ng/ml concentrations with imputed values for those under the LOD
+```{r plot all OPE}
+par(mfrow=c(1,1))
+rownames(Combined_ExposureData_Complete) <-Combined_ExposureData_Complete$pathways_id
+Exposures_ConcOnly <- Combined_ExposureData_Complete %>%
+  dplyr::select(dep, dprp, dbup_dibp, bboep, behp, bcetp, bcpp, bdcpp, dphp, bmpp)
+LogConcOnly <- log(Exposures_ConcOnly) #Using default settings here which are natural log (this is the same log transformation that was used for the PAH paper)
+
+LogConc_Reordered <- LogConcOnly[order(-sapply(LogConcOnly, median))]
+colnames(LogConc_Reordered) <- c("DEP", "BDCPP", "DPHP", "BCETP", "DBUP & DIBP", "BBOEP", "DPRP", "BCPP", "BEHP", "BMPP")
+BoxPlot_Colors <- c(rep("LightBlue", 5), rep("darkseagreen1", 5))
+boxplot(LogConc_Reordered, cex.axis=0.7, col=BoxPlot_Colors, ylim=c(-6,6), ylab="Log OPE Concentration (ng/mL)")
+points(log(OPE_LODs$LOD), pch= 18, col="red", cex=1.5)
+stripchart(LogConc_Reordered,              # Data
+           method = "jitter", # Random noise
+           jitter=0.25,
+           pch = 20, 
+           cex=0.05,# Pch symbol
+           col = "gray34",           # Color of the symbol
+           add = TRUE, 
+           vertical=TRUE)
+
+
+
+```
+
+### LOD Cutoff
+Calculate which OPEs pass the LOD threshold for use as continuous variables
+Requiring 70% to be greater than LOD. 
+Need 0 = 516 or higher
+```{r LOD Cutoff}
+summary(Combined_ExposureData_Complete$dep_lod) #yes
+summary(Combined_ExposureData_Complete$dprp_lod) #no
+summary(Combined_ExposureData_Complete$dbup_dibp_lod) #yes
+summary(Combined_ExposureData_Complete$bboep_lod) #no
+summary(Combined_ExposureData_Complete$behp_lod) #no
+summary(Combined_ExposureData_Complete$bcetp_lod) #yes
+summary(Combined_ExposureData_Complete$bcpp_lod) #no
+summary(Combined_ExposureData_Complete$bdcpp_lod) #yes
+summary(Combined_ExposureData_Complete$dphp_lod) #yes
+summary(Combined_ExposureData_Complete$bmpp_lod) #no
+```
+
+
+### Plot only exposure data with 70% >LOD
+```{r plot greater than LOD cutoff}
+Exposures_ConcOnly_LODCutoff <- Combined_ExposureData_Complete %>%
+  dplyr::select(dep, dbup_dibp, bcetp, bdcpp, dphp)
+
+Exposures_LogConcOnly_LODCutoff <- log(Exposures_ConcOnly_LODCutoff) #Log Transformation using default settings for natural log transformation (this is the same log transformation that was used for PAH data)
+boxplot(Exposures_LogConcOnly_LODCutoff, main="Log OPE Concentrations (ng/mL) (70% > LOD)", cex.axis=0.7)
+
+```
+
+### Plotting raw OPE values for compounds with 70% > LOD to check for outliers
+
+``` {r outliers for less than LOD OPEs}
+hist(Exposures_ConcOnly$dep, breaks=25, labels=T, ylim=c(0, 700))
+hist(Exposures_ConcOnly$dbup_dibp, breaks=25, labels=T, ylim=c(0, 700))
+hist(Exposures_ConcOnly$bcetp, breaks=25, labels=T, ylim=c(0, 700))
+hist(Exposures_ConcOnly$bdcpp, breaks=25, labels=T, ylim=c(0, 700))
+hist(Exposures_ConcOnly$dphp, breaks=25, labels=T, ylim=c(0, 700))
+boxplot(Exposures_ConcOnly_LODCutoff, main="Raw OPE values for Compounds with 70% > LOD")
+boxplot(Exposures_ConcOnly_LODCutoff, main="Raw OPE values for Compounds with 70% > LOD", ylim=c(0, 150)) #Lowering y-axis cutoff for better visualization, but this does cut-off several outliers for dphp and dep
+```
+
+### Correlation Plot (Pearson Correlation)
+Plotting the correlation of OPEs that meet the 70%>LOD cutoff using a pearson correlation (linear correlation)
+Using raw (not log adjusted) OPE values for these correlations
+```{r correlation plots}
+corr_pearson <- cor(Exposures_ConcOnly_LODCutoff)
+corrplot(corr_pearson, method="color")
+print(corr_pearson)
+```
+
+### Correlation Plot (Spearman Correlation)
+Plotting the correlation of OPEs that meet the 70%>LOD cutoff using a spearman correlation (nonparametric correlation)
+Using raw (not log adjusted) OPE values for these correlations
+```{r correlation plots Spearman}
+Exposures_ConcOnly_LODCutoff_Renamed <- Exposures_ConcOnly_LODCutoff
+colnames(Exposures_ConcOnly_LODCutoff_Renamed) <- c("DEP", "DBUP & DIBP", "BCETP", "BDCPP", "DPHP")
+corr_spear <- cor(Exposures_ConcOnly_LODCutoff_Renamed, method="spearman")
+corrplot(corr_spear, method="color",addCoef.col = "black")
+print(corr_spear)
+```
+
+### Correlation Test
+This codes uses pearson as the default correlation. There isn't a way to indicate pearson vs spearman for the cor.mtest function so using the default here for the plot/correlation calculation to hopefully match. 
+```{r corr test}
+trace(corrplot, edit=T)
+corrtest <- cor.mtest(Exposures_ConcOnly_LODCutoff_Renamed, conf.level = .95)
+corrplot(cor(Exposures_ConcOnly_LODCutoff_Renamed),type="lower", method="color",order = "hclust", p.mat = corrtest$p,  addCoef.col = "black",insig = "label_sig", pch.cex=3, pch.col="red")
+```
+
+### PCA
+Running a principal components analysis to assess variation in the data
+Only including OPEs that meet the 70% over the LOD threshold
+```{r PCA}
+PCA_matrix <-as.matrix(Exposures_LogConcOnly_LODCutoff)
+PC_object<-prcomp(PCA_matrix, scale=TRUE)
+PCs <- PC_object$x
+
+PCs =as.data.frame(PCs[,1:5])
+
+EVAL<-as.data.frame(matrix(NA,nrow=5,ncol=5))
+colnames(EVAL)<-c("P_DEP","P_DBUP_DIBP", "P_BCETP", "P_BDCPP", "P_DPHP")
+PC_nums <-c("1", "2", "3", "4", "5")
+
+for (i in 1:5){
+  AOV<-aov(PCs[,i]~dep,data=Exposures_LogConcOnly_LODCutoff)
+  EVAL[i,1] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:5){
+  AOV<-aov(PCs[,i]~dbup_dibp,data=Exposures_LogConcOnly_LODCutoff)
+  EVAL[i,2] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:5){
+  AOV<-aov(PCs[,i]~bcetp,data=Exposures_LogConcOnly_LODCutoff)
+  EVAL[i,3] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:5){
+  AOV<-aov(PCs[,i]~bdcpp,data=Exposures_LogConcOnly_LODCutoff)
+  EVAL[i,4] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:5){
+  AOV<-aov(PCs[,i]~dphp,data=Exposures_LogConcOnly_LODCutoff)
+  EVAL[i,5] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+#Proportion of Variation Explained by Each PC
+EVAL <-cbind(EVAL, PC_nums)
+EVAL$PropVar <-summary(PC_object)$importance["Proportion of Variance", 1:5]
+
+ggplot(PCs, aes(x=PC1, y=PC2)) +
+  geom_point()+
+  ggtitle("PC1 and PC2")
+
+EVAL %>%
+  ggplot(aes(x=PC_nums, y=PropVar, group=1)) +
+  geom_line()+
+  geom_point() +
+  ggtitle("Variance by PC") + 
+  ylab("Proportion of Variance") +
+  ylim(0, 1)
+
+print(EVAL)
+```
+
+### Participant Overlap Venn Diagram
+Plotting a venn diagram to show that none of the participants between M1, M2, and M3 overlap with each other.
+```{r venn diagram}
+M1_IDs <- Exposure_and_Covariates %>%
+  dplyr::filter(!is.na(ofpr_gestage_m1))
+M1_IDs <- M1_IDs$pathways_id
+
+M2_IDs <- Exposure_and_Covariates %>%
+  dplyr::filter(!is.na(ofpr_gestage_m2))
+M2_IDs <- M2_IDs$pathways_id
+
+M3_IDs <- Exposure_and_Covariates %>%
+  dplyr::filter(!is.na(ofpr_gestage_m3))
+M3_IDs <- M3_IDs$pathways_id
+
+VDList <- list("M1"=M1_IDs, "M2"=M2_IDs, "M3"=M3_IDs)
+ggvenn(VDList, show_percentage=FALSE, fill_color = c("red", "blue", "yellow"))
+```
+
+### Plot Distribution of Study Visit Timing
+This variable will be used as an interaction term to assess effect modification
+```{r study visit timing}
+hist(Covariates_Clean$OPFR_Gestage)
+```
+
+### Make an Exposure Dataframe with only binary or continuous data for each OPE based on if it met the LOD threshold
+```{r LOD threshold exposure categorization}
+Concentrations <- Combined_ExposureData_Complete %>%
+  dplyr::select(pathways_id, dep, dbup_dibp, bcetp, bdcpp, dphp)
+rownames(Concentrations) <- Concentrations$pathways_id
+Concentrations <- Concentrations[,-1]
+LogConcentrationCont <- log(Concentrations)
+LogConcentrationCont$pathways_id <- rownames(LogConcentrationCont)
+colnames(LogConcentrationCont) <- c("log_dep", "log_dbup_dibp", "log_bcetp", "log_bdcpp", "log_dphp", "pathways_id")
+
+Combined_ExposureData_Complete <- full_join(Combined_ExposureData_Complete, LogConcentrationCont, by=c("pathways_id"))
+
+ExposureData_Binary_or_LogContinuous <- Combined_ExposureData_Complete %>%
+  dplyr::select(pathways_id, log_dep, log_dbup_dibp, log_bcetp, log_bdcpp, log_dphp, dprp_lod, bboep_lod, behp_lod, bcpp_lod, bmpp_lod)
+```
+
+
+### Export Cleaned Covariates and Exposure Data
+```{r export clean data}
+#write.csv(Covariates_Clean, "/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanCovariates_102023.csv")
+
+#write.csv(Combined_ExposureData_Complete, "/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanOPEData_102023.csv")
+
+#write.csv(ExposureData_Binary_or_LogContinuous, "/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanOPEData_BinaryLogContinuous_102023.csv")
+```
+
+### Plotting histograms of OPE concentrations
+Based on co-author feedback on 9/27/23- plotting histograms of OPE concentrations to see how close the values are to the imputed <LOD values. Plotting log values because some outlier values make it hard to view distribution with raw values. Red line show the LOD
+```{r plot OPE histograms}
+par(mfrow=c(2,5))
+#Continuous OPEs with 70% >LOD
+hist(Combined_ExposureData_Complete$log_dep, label=TRUE, main="DEP", xlab="log_DEP")
+abline(v=log(0.0344), col="red")
+
+hist(Combined_ExposureData_Complete$log_dbup_dibp, label=TRUE, main="DBUP&DIBP", xlab="log_DBUPDIBP")
+abline(v=log(0.0441), col="red")
+
+hist(Combined_ExposureData_Complete$log_bcetp, label=TRUE, main="BCETP", xlab="log_BCETP")
+abline(v=log(0.02), col="red")
+
+hist(Combined_ExposureData_Complete$log_bdcpp, label=TRUE, main="BDCPP", xlab="log_BDCPP")
+abline(v=log(0.0174), col="red")
+
+hist(Combined_ExposureData_Complete$log_dphp, label=TRUE, main="DPHP", xlab="log_dphp")
+abline(v=log(0.0281), col="red")
+
+#OPEs that were treated as binary >70% < LOD
+hist(log(Combined_ExposureData_Complete$dprp), label=TRUE, main="DPRP", xlab="log_dprp")
+abline(v=log(0.0278), col="red")
+
+hist(log(Combined_ExposureData_Complete$bboep), label=TRUE, main="BBOEP", xlab="log_bboep")
+abline(v=log(0.0199), col="red")
+
+hist(log(Combined_ExposureData_Complete$bcpp), label=TRUE, main="BCPP", xlab="log_bcpp")
+abline(v=log(0.0204), col="red")
+
+hist(log(Combined_ExposureData_Complete$behp), label=TRUE, main="BEHP", xlab="log_behp")
+abline(v=log(0.017), col="red")
+
+hist(log(Combined_ExposureData_Complete$bmpp), label=TRUE, main="BMPP", xlab="log_bmpp")
+abline(v=log(0.0115), col="red")
+```
+
+
+
+
+

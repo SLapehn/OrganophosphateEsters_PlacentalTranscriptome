@@ -1,0 +1,115 @@
+---
+title: "Female_IndividualOPE_DEGAnalysis"
+author: "Samantha Lapehn"
+date: "2024-08-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Female-Individual OPE DEG Analysis
+
+This code will be used to evaluate the association between individual OPE compounds and the placental transcriptome in female samples only. Covariates and Exposure Data have already been cleaned/processed and RNAseq data has been TMM normalized and filtered. Latest version of all data is from 10/23/23. 
+
+### Load Packages
+```{r load packages}
+library(tidyverse)
+library(edgeR)
+library(RColorBrewer)
+library(org.Hs.eg.db)
+library(biomaRt)
+library(sva)
+library(openxlsx)
+```
+
+### Load Data
+```{r load data}
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_Female_102323.RData")
+```
+
+### Fix Data Class
+```{r Covar Data Class Fix}
+Covariates_Female$h_m_race <- as.factor(Covariates_Female$h_m_race)
+Covariates_Female$h_m_enroll_educ <- as.factor(Covariates_Female$h_m_enroll_educ)
+Covariates_Female$batches <- as.factor(Covariates_Female$batches)
+Covariates_Female$cg_labor_type <- as.factor(Covariates_Female$cg_labor_type)
+Covariates_Female$h_del_method <- as.factor(Covariates_Female$h_del_method)
+Covariates_Female$h_m_alcohol_prenatal <- as.factor(Covariates_Female$h_m_alcohol_prenatal)
+Covariates_Female$Smoking_Composite <- as.factor(Covariates_Female$Smoking_Composite)
+Covariates_Female$h_firstborn <- as.factor(Covariates_Female$h_firstborn)
+```
+
+### Run DEG Analysis
+Keep model the same as the combined sex model, but removing fetal sex as a covariate
+```{r DEG Analysis}
+OPE_Results<-list()
+for(i in 1:dim(OPE_Data_Select_Ready_Female)[2]){
+mod <-model.matrix(~+(OPE_Data_Select_Ready_Female[,i])
+                   +Covariates_Female$opfr_sg
+                   +Covariates_Female$h_m_delivery_age
+                   +Covariates_Female$h_m_prepreg_bmi
+                   +Covariates_Female$h_m_race
+                   +Covariates_Female$h_m_enroll_educ
+                   +Covariates_Female$batches
+                   +Covariates_Female$cg_labor_type
+                   +Covariates_Female$h_del_method
+                   +Covariates_Female$h_m_alcohol_prenatal
+                   +Covariates_Female$Smoking_Composite
+                   +Covariates_Female$h_firstborn
+                   +Covariates_Female$h_gravidity
+  )
+
+ mod0=mod[,-2]
+  sv <- sva(cpm(Y_norm_Female, log = TRUE),mod, mod0)
+  mod_sv<-cbind(mod,sv$sv)
+  dim(mod)
+
+  v<-voom(Y_norm_Female, mod_sv, plot=TRUE) 
+  designMatrix<-v$design
+fit <- eBayes(lmFit(v, designMatrix))
+Results<-topTable(fit, coef=2,number=dim(fit)[1],adjust.method="BH") #Coefficent 2 is the OPE
+par(mfrow=c(1,2))
+hist(Results$P.Value,breaks=20,main=colnames(OPE_Data_Select_Ready_Female)[i])
+plot(Results$logFC,-log(Results$P.Value, base=10),ylim=c(0,15),pch=16,cex=0.5,main=colnames(OPE_Data_Select_Ready_Female)[i],ylab="Log P Value",xlab="logFC")
+  Cutoff<-0.05/dim(Results)[1]
+  abline(h=-log(Cutoff, base=10),lwd=2,lty=2,col="blue")
+  abline(h=-log(0.05, base=10),lwd=1.5,lty=2,col="azure4")
+  
+  OPE_Results[[i]]<-Results
+  names(OPE_Results)[i]<-colnames(OPE_Data_Select_Ready_Female)[i]
+}
+
+#save(OPE_Results, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/Gene Results/OPE_Results_FemaleModel_083024.Rdata")
+```
+### Pull Significant Results
+```{r pull DEGs}
+#Continuous OPEs (70%+ > LOD)
+DEP_DEGs <- OPE_Results$log_dep %>%
+  dplyr::filter(adj.P.Val<0.1)
+DBUP_DIBP_DEGs <- OPE_Results$log_dbup_dibp %>%
+  dplyr::filter(adj.P.Val<0.1)
+BCETP_DEGs <- OPE_Results$log_bcetp %>%
+  dplyr::filter(adj.P.Val<0.1)
+BDCPP_DEGs <- OPE_Results$log_bdcpp %>%
+  dplyr::filter(adj.P.Val<0.1)
+DPHP_DEGs <- OPE_Results$log_dphp %>%
+  dplyr::filter(adj.P.Val<0.1)
+
+#Binary OPEs (<70% above LOD)
+DPRP_DEGs <- OPE_Results$dprp_lod %>%
+  dplyr::filter(adj.P.Val<0.1)
+BBOEP_DEGs <- OPE_Results$bboep_lod %>%
+  dplyr::filter(adj.P.Val<0.1)
+BEHP_DEGs <- OPE_Results$behp_lod %>%
+  dplyr::filter(adj.P.Val<0.1)
+BCPP_DEGs <- OPE_Results$bcpp_lod %>%
+  dplyr::filter(adj.P.Val<0.1)
+BMPP_DEGs <- OPE_Results$bmpp_lod %>%
+  dplyr::filter(adj.P.Val<0.1)
+
+#Save Results
+names_DEGs <- list('Log_DEP' = DEP_DEGs, 'Log_DBUP_DIBP' = DBUP_DIBP_DEGs, 'Log_BCETP' = BCETP_DEGs, 'Log_BDCPP' = BDCPP_DEGs, 'Log_DPHP' = DPHP_DEGs, 'Binary_DPRP' = DPRP_DEGs, 'Binary_BEHP'= BEHP_DEGs, 'Binary_BBOEP' = BBOEP_DEGs, 'Binary_BCPP'=BCPP_DEGs, 'Binary_BMPP'=BMPP_DEGs)
+#write.xlsx(names_DEGs, rowNames=TRUE, file = '/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/Gene Results/FemaleModelDEGs_083024.xlsx')
+```

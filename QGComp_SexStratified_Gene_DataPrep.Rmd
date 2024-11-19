@@ -1,0 +1,143 @@
+---
+title: "QGComp"
+author: "Samantha Lapehn"
+date: "2023-11-29"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## QGComp for OPE Data
+Using this code to run quantile g-based computation for OPE mixtures and the placental transcriptome using code shared by Dennis Khodsevich from UC-Berkeley. https://github.com/D-Khodasevich/EWAS_QGComp
+
+### Load Packages and Functions
+```{r packages}
+library(tidyverse)
+library(qgcomp)
+library(data.table)
+library(edgeR)
+
+source("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/EWAS_QGComp Code from Dennis/EWAS_QGComp_Functions_Update3.R")
+#Updated source code received 8/21/23 and should fix the output when using the "full" option for the main and bootstrap functions
+```
+
+### Load Data
+Need covariates and exposure data, as well as gene expression with genes as rows and samples as columns. 
+```{r load data}
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_Male_102323.RData")
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_Female_102323.RData")
+```
+
+### Prepare Exposure Data
+Need to remove binary exposures so that only the continuous OPEs are included
+```{r prep exposure data}
+Mixture_Female <- OPE_Data_Select_Ready_Female %>%
+  dplyr::select(log_dep, log_dbup_dibp, log_bcetp, log_bdcpp, log_dphp)
+Mixture_Female$pathways_id <-rownames(Mixture_Female)
+
+Mixture_Male <- OPE_Data_Select_Ready_Male %>%
+  dplyr::select(log_dep, log_dbup_dibp, log_bcetp, log_bdcpp, log_dphp)
+Mixture_Male$pathways_id <-rownames(Mixture_Male)
+
+Xnm <- c("log_dep", "log_dbup_dibp", "log_bcetp", "log_bdcpp", "log_dphp")
+```
+
+### Prepare Covariate Data
+Need to remove any covariates that we aren't using
+```{r covar prep}
+Covariates_Selected_Female <- Covariates_Female %>%
+  dplyr::select(pathways_id, opfr_sg, h_m_delivery_age, h_m_prepreg_bmi, h_m_race, h_m_enroll_educ, batches, cg_labor_type, h_del_method, h_m_alcohol_prenatal, Smoking_Composite, h_firstborn, h_gravidity)
+
+Covariates_Selected_Male <- Covariates_Male %>%
+  dplyr::select(pathways_id, opfr_sg, h_m_delivery_age, h_m_prepreg_bmi, h_m_race, h_m_enroll_educ, batches, cg_labor_type, h_del_method, h_m_alcohol_prenatal, Smoking_Composite, h_firstborn, h_gravidity)
+
+covars <- c("opfr_sg", "h_m_delivery_age", "h_m_prepreg_bmi", "h_m_race", "h_m_enroll_educ", "batches", "cg_labor_type", "h_del_method", "h_m_alcohol_prenatal", "Smoking_Composite", "h_firstborn", "h_gravidity")
+```
+
+### Combine Covariate and Exposure Data into Single dataframe
+```{r combine exposure and covar}
+Pheno_Female <- inner_join(Covariates_Selected_Female, Mixture_Female, by=c("pathways_id"))
+rownames(Pheno_Female) <- Pheno_Female$pathways_id
+Pheno_Female <- Pheno_Female %>%
+  dplyr::select(-pathways_id)
+#Make sure certain covariates are indicated as factors
+Pheno_Female$h_m_race <- as.factor(Pheno_Female$h_m_race)
+Pheno_Female$h_m_enroll_educ <- as.factor(Pheno_Female$h_m_enroll_educ)
+Pheno_Female$batches <- as.factor(Pheno_Female$batches)
+Pheno_Female$cg_labor_type <- as.factor(Pheno_Female$cg_labor_type)
+Pheno_Female$h_del_method<- as.factor(Pheno_Female$h_del_method)
+Pheno_Female$h_m_alcohol_prenatal <- as.factor(Pheno_Female$h_m_alcohol_prenatal)
+Pheno_Female$Smoking_Composite <- as.factor(Pheno_Female$Smoking_Composite)
+Pheno_Female$h_firstborn <- as.factor(Pheno_Female$h_firstborn)
+Pheno_Female$h_gravidity <- as.factor(Pheno_Female$h_gravidity)
+
+#Check data types
+summary(Pheno_Female)
+
+
+Pheno_Male <- inner_join(Covariates_Selected_Male, Mixture_Male, by=c("pathways_id"))
+rownames(Pheno_Male) <- Pheno_Male$pathways_id
+Pheno_Male <- Pheno_Male %>%
+  dplyr::select(-pathways_id)
+#Make sure certain covariates are indicated as factors
+Pheno_Male$h_m_race <- as.factor(Pheno_Male$h_m_race)
+Pheno_Male$h_m_enroll_educ <- as.factor(Pheno_Male$h_m_enroll_educ)
+Pheno_Male$batches <- as.factor(Pheno_Male$batches)
+Pheno_Male$cg_labor_type <- as.factor(Pheno_Male$cg_labor_type)
+Pheno_Male$h_del_method<- as.factor(Pheno_Male$h_del_method)
+Pheno_Male$h_m_alcohol_prenatal <- as.factor(Pheno_Male$h_m_alcohol_prenatal)
+Pheno_Male$Smoking_Composite <- as.factor(Pheno_Male$Smoking_Composite)
+Pheno_Male$h_firstborn <- as.factor(Pheno_Male$h_firstborn)
+Pheno_Male$h_gravidity <- as.factor(Pheno_Male$h_gravidity)
+
+#Check data types
+summary(Pheno_Male)
+
+```
+
+### Prep Expression Data
+```{r expr prep}
+meth_Female <- cpm(Y_norm_Female$counts, log=T)
+meth_Male <- cpm(Y_norm_Male$counts, log=T)
+```
+
+### Check that order of Expression and Pheno Data are the same
+```{r check order}
+check_Female <- colnames(meth_Female) == rownames(Pheno_Female)
+sum(check_Female)
+
+check_Male <- colnames(meth_Male) == rownames(Pheno_Male)
+sum(check_Male)
+```
+
+### Split for parallelization
+To Parallelize the function need to split the meth matrix into smaller pieces. 
+```{r split}
+meth_Female_DF <- data.frame(meth_Female)
+meth_Female_list <- split(meth_Female_DF, rep(1:1289, each=10))
+meth_Female_list_matrix <- lapply(meth_Female_list, as.matrix)
+
+meth_Male_DF <- data.frame(meth_Male)
+meth_Male_list <- split(meth_Male_DF, rep(1:1289, each=10))
+meth_Male_list_matrix <- lapply(meth_Male_list, as.matrix)
+
+```
+
+
+### Save input data that will be needed to run Bootstrap QGComp on the terminal
+```{r save input data}
+#save(meth_Female_list_matrix, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/QGCompInputforTerminal/ExpressionData_Female_List_121323.Rdata")
+
+#save(Pheno_Female, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/QGCompInputforTerminal/CovariateData_Female_121323.Rdata")
+
+#save(meth_Male_list_matrix, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/QGCompInputforTerminal/ExpressionData_Male_List_121323.Rdata")
+
+#save(Pheno_Male, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/QGCompInputforTerminal/CovariateData_Male_121323.Rdata")
+
+#save(covars, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/QGCompInputforTerminal/CovariateNameVector_SexStratified_121323.Rdata")
+
+```

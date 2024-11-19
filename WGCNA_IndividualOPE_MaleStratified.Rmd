@@ -1,0 +1,711 @@
+---
+title: "WGCNA Indiidual OPEs Linear Models"
+author: "Samantha Lapehn"
+date: "2023-11-01"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## WGCNA Individual OPEs Linear Models- Sex Stratified
+WGCNA modules were generated on the full CANDLE transcriptome dataset (N=794) (Parenti et al. 2024 Journal of Nutrition). 
+
+Here I will perform the same linear model, but with sex-stratified subsets of the WGCNA modules/covariates/exposure data. 
+
+## Load Packages
+```{r load packages}
+library(tidyverse)
+```
+
+## Load  Data
+Loading the unmerged MEs here
+```{r load data}
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CANDLE_WGCNA_copy_110123/CANDLE_wide_WGCNA_ensembl.RData") #loading version with ensembl IDs
+
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_102023.RData")
+#Note: Loading this data only to pull the OPE values, not to use the expression data
+
+Covariates <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanCovariates_102023.csv")
+
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CANDLE_WGCNA_copy_110123/CANDLE_wide_WGCNA_ensembl_fullObject.RData") #Loading full ME object just in case
+
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CANDLE_WGCNA_copy_110123/cqn_data/cqn_data.RData") #Loading CQN Expr Data
+
+```
+
+## Stratify exposure data, MEs, and covariates by sex
+```{r filter MEs}
+Covariates_Male <- Covariates %>%
+   dplyr::filter(h_c_sex=="M")
+
+Covariates_Female <- Covariates %>%
+   dplyr::filter(h_c_sex=="F")
+
+OPE_Data_Male <- OPE_Data_Select_Ready %>%
+  dplyr::filter(rownames(OPE_Data_Select_Ready) %in% Covariates_Male$pathways_id)
+
+OPE_Data_Female <- OPE_Data_Select_Ready %>%
+  dplyr::filter(rownames(OPE_Data_Select_Ready) %in% Covariates_Female$pathways_id)
+
+MEs_Male <- MEs %>%
+  dplyr::filter(rownames(MEs) %in% Covariates_Male$pathways_id)
+
+MEs_Female <- MEs %>%
+  dplyr::filter(rownames(MEs) %in% Covariates_Female$pathways_id)
+```
+
+## Update sample orders to match
+```{r check sample order}
+#Males
+reorder_M <- match(rownames(OPE_Data_Male), rownames(MEs_Male))
+MEs_Male_reorder <- MEs_Male[reorder_M,]
+
+check <- rownames(MEs_Male_reorder) == rownames(OPE_Data_Male)
+sum(check)
+
+check2 <- rownames(MEs_Male_reorder) == Covariates_Male$pathways_id
+sum(check2)
+
+#Females
+reorder_F <- match(rownames(OPE_Data_Female), rownames(MEs_Female))
+MEs_Female_reorder <- MEs_Female[reorder_F,]
+
+check3 <- rownames(MEs_Female_reorder) == rownames(OPE_Data_Female)
+sum(check3)
+
+check4 <- rownames(MEs_Female_reorder) == Covariates_Female$pathways_id
+sum(check4)
+```
+
+### Fix Data Class
+```{r Covar Data Class Fix}
+Covariates_Male$h_m_race <- as.factor(Covariates_Male$h_m_race)
+Covariates_Male$h_m_enroll_educ <- as.factor(Covariates_Male$h_m_enroll_educ)
+Covariates_Male$batches <- as.factor(Covariates_Male$batches)
+Covariates_Male$cg_labor_type <- as.factor(Covariates_Male$cg_labor_type)
+Covariates_Male$h_del_method <- as.factor(Covariates_Male$h_del_method)
+Covariates_Male$h_m_alcohol_prenatal <- as.factor(Covariates_Male$h_m_alcohol_prenatal)
+Covariates_Male$Smoking_Composite <- as.factor(Covariates_Male$Smoking_Composite)
+Covariates_Male$h_firstborn <- as.factor(Covariates_Male$h_firstborn)
+```
+
+
+# Running a separate code chunk for each OPE
+5 OPEs are log transformed continuous values
+5 OPEs are binary (present or absent) due to high percent below LOD
+
+For each OPE, I am running an unadjusted and adjusted linear model for associations with 40 module eigengenes identified through WGCNA. 
+
+## Log DEP
+```{r Log DEP}
+UnadjustedLM_Results_DEP<-list()
+Unadjusted_LM_Pval_DEP <- list()
+UnadjustedLM_DEP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_dep) 
+  
+  UnadjustedLM_Results_DEP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_DEP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_DEP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_DEP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_DEP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_DEP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted p-values
+print(Unadjusted_LM_Pval_DEP)
+
+AdjustedLM_Results_DEP<-list()
+Adjusted_LM_Pval_DEP <- list()
+Adjusted_LM_EE_DEP <- list()
+AdjustedLM_DEP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_dep
+                  +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_DEP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_DEP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_DEP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_DEP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_DEP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_DEP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_DEP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_DEP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+
+print(Adjusted_LM_Pval_DEP)
+```
+
+## Log DBUP_DIBP
+```{r DBUP_DIBP}
+UnadjustedLM_Results_DBUP_DIBP<-list()
+Unadjusted_LM_Pval_DBUP_DIBP <- list()
+UnadjustedLM_DBUP_DIBP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_dbup_dibp) 
+  
+  UnadjustedLM_Results_DBUP_DIBP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_DBUP_DIBP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_DBUP_DIBP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_DBUP_DIBP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_DBUP_DIBP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_DBUP_DIBP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_DBUP_DIBP)
+
+AdjustedLM_Results_DBUP_DIBP<-list()
+Adjusted_LM_Pval_DBUP_DIBP <- list()
+Adjusted_LM_EE_DBUP_DIBP <- list()
+AdjustedLM_DBUP_DIBP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_dbup_dibp 
+                   +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_DBUP_DIBP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_DBUP_DIBP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_DBUP_DIBP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_DBUP_DIBP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_DBUP_DIBP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_DBUP_DIBP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_DBUP_DIBP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_DBUP_DIBP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_DBUP_DIBP)
+
+```
+
+## Log BCETP
+```{r Log BCETP}
+UnadjustedLM_Results_BCETP<-list()
+Unadjusted_LM_Pval_BCETP <- list()
+UnadjustedLM_BCETP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_bcetp) 
+  
+  UnadjustedLM_Results_BCETP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_BCETP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_BCETP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_BCETP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_BCETP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_BCETP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_BCETP)
+
+AdjustedLM_Results_BCETP<-list()
+Adjusted_LM_Pval_BCETP <- list()
+Adjusted_LM_EE_BCETP <- list()
+AdjustedLM_BCETP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_bcetp
+                   +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_BCETP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_BCETP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_BCETP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_BCETP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_BCETP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_BCETP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_BCETP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_BCETP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_BCETP)
+```
+
+## Log BDCPP
+```{r BDCPP}
+UnadjustedLM_Results_BDCPP<-list()
+Unadjusted_LM_Pval_BDCPP <- list()
+UnadjustedLM_BDCPP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_bdcpp) 
+  
+  UnadjustedLM_Results_BDCPP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_BDCPP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_BDCPP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_BDCPP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_BDCPP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_BDCPP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_BDCPP)
+
+AdjustedLM_Results_BDCPP<-list()
+Adjusted_LM_Pval_BDCPP <- list()
+Adjusted_LM_EE_BDCPP <- list()
+AdjustedLM_BDCPP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_bdcpp
+                   +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_BDCPP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_BDCPP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_BDCPP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_BDCPP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_BDCPP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_BDCPP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_BDCPP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_BDCPP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_BDCPP)
+
+```
+## Log DPHP
+```{r Log DPHP}
+UnadjustedLM_Results_DPHP<-list()
+Unadjusted_LM_Pval_DPHP <- list()
+UnadjustedLM_DPHP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_dphp) 
+  
+  UnadjustedLM_Results_DPHP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_DPHP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_DPHP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_DPHP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_DPHP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_DPHP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_DPHP)
+
+AdjustedLM_Results_DPHP<-list()
+Adjusted_LM_Pval_DPHP <- list()
+Adjusted_LM_EE_DPHP <- list()
+AdjustedLM_DPHP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$log_dphp
+                   +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_DPHP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_DPHP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_DPHP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_DPHP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_DPHP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_DPHP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_DPHP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_DPHP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_DPHP)
+```
+
+## Binary dprp
+```{r Binary dprp}
+UnadjustedLM_Results_DPRP<-list()
+Unadjusted_LM_Pval_DPRP <- list()
+UnadjustedLM_DPRP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$dprp_lod) 
+  
+  UnadjustedLM_Results_DPRP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_DPRP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_DPRP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_DPRP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_DPRP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_DPRP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_DPRP)
+
+AdjustedLM_Results_DPRP<-list()
+Adjusted_LM_Pval_DPRP <- list()
+Adjusted_LM_EE_DPRP <- list()
+AdjustedLM_DPRP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$dprp_lod
+                  +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_DPRP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_DPRP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_DPRP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_DPRP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_DPRP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_DPRP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_DPRP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_DPRP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_DPRP)
+```
+
+## Binary BBOEP
+```{r Binary BBOEP}
+UnadjustedLM_Results_BBOEP<-list()
+Unadjusted_LM_Pval_BBOEP <- list()
+UnadjustedLM_BBOEP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$bboep_lod) 
+  
+  UnadjustedLM_Results_BBOEP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_BBOEP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_BBOEP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_BBOEP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_BBOEP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_BBOEP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_BBOEP)
+
+AdjustedLM_Results_BBOEP<-list()
+Adjusted_LM_Pval_BBOEP <- list()
+Adjusted_LM_EE_BBOEP <- list()
+AdjustedLM_BBOEP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$bboep_lod
+                   +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_BBOEP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_BBOEP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_BBOEP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_BBOEP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_BBOEP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_BBOEP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_BBOEP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_BBOEP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_BBOEP)
+```
+
+## Binary BEHP
+```{r Binary BEHP}
+UnadjustedLM_Results_BEHP<-list()
+Unadjusted_LM_Pval_BEHP <- list()
+UnadjustedLM_BEHP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$behp_lod) 
+  
+  UnadjustedLM_Results_BEHP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_BEHP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_BEHP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_BEHP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_BEHP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_BEHP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_BEHP)
+
+AdjustedLM_Results_BEHP<-list()
+Adjusted_LM_Pval_BEHP <- list()
+Adjusted_LM_EE_BEHP <- list()
+AdjustedLM_BEHP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$behp_lod
+                   +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_BEHP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_BEHP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_BEHP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_BEHP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_BEHP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_BEHP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_BEHP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_BEHP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_BEHP)
+```
+
+## Binary BCPP
+```{r Binary BCPP}
+UnadjustedLM_Results_BCPP<-list()
+Unadjusted_LM_Pval_BCPP <- list()
+UnadjustedLM_BCPP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$bcpp_lod) 
+  
+  UnadjustedLM_Results_BCPP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_BCPP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_BCPP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_BCPP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_BCPP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_BCPP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_BCPP)
+
+AdjustedLM_Results_BCPP<-list()
+Adjusted_LM_Pval_BCPP <- list()
+Adjusted_LM_EE_BCPP <- list()
+AdjustedLM_BCPP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$bcpp_lod
+                   +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_BCPP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_BCPP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_BCPP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_BCPP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_BCPP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_BCPP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  Adjusted_LM_EE_BCPP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_BCPP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_BCPP)
+
+```
+
+## Binary BMPP
+```{r binary BMPP}
+UnadjustedLM_Results_BMPP<-list()
+Unadjusted_LM_Pval_BMPP <- list()
+UnadjustedLM_BMPP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_unadjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$bmpp_lod) 
+  
+  UnadjustedLM_Results_BMPP[[i]]<-summary(LM_unadjusted)
+  names(UnadjustedLM_Results_BMPP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Unadjusted_LM_Pval_BMPP[[i]] <- summary(LM_unadjusted)$coefficients[2,4]
+  names(Unadjusted_LM_Pval_BMPP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+  UnadjustedLM_BMPP_coefficients[[i]] <- broom::tidy(LM_unadjusted)
+  names(UnadjustedLM_BMPP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+}
+#Printing unadjusted model p-values
+print(Unadjusted_LM_Pval_BMPP)
+
+AdjustedLM_Results_BMPP<-list()
+Adjusted_LM_Pval_BMPP <- list()
+Adjusted_LM_EE_BMPP <- list()
+AdjustedLM_BMPP_coefficients <- list()
+for(i in 1:dim(MEs_Male_reorder)[2]){
+  LM_adjusted<-lm((MEs_Male_reorder[,i])~OPE_Data_Male$bmpp_lod
+                   +Covariates_Male$opfr_sg
+                   +Covariates_Male$h_m_delivery_age
+                   +Covariates_Male$h_m_prepreg_bmi
+                   +Covariates_Male$h_m_race
+                   +Covariates_Male$h_m_enroll_educ
+                   +Covariates_Male$batches
+                   +Covariates_Male$cg_labor_type
+                   +Covariates_Male$h_del_method
+                   +Covariates_Male$h_m_alcohol_prenatal
+                   +Covariates_Male$Smoking_Composite
+                   +Covariates_Male$h_firstborn
+                   +Covariates_Male$h_gravidity)
+  
+  AdjustedLM_Results_BMPP[[i]]<-summary(LM_adjusted)
+  names(AdjustedLM_Results_BMPP)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  AdjustedLM_BMPP_coefficients[[i]] <- broom::tidy(LM_adjusted)
+  names(AdjustedLM_BMPP_coefficients)[i]<-colnames(MEs_Male_reorder)[i] 
+  
+  Adjusted_LM_Pval_BMPP[[i]] <- summary(LM_adjusted)$coefficients[2,4]
+  names(Adjusted_LM_Pval_BMPP)[i]<-colnames(MEs_Male_reorder)[i]
+  
+   Adjusted_LM_EE_BMPP[[i]] <- summary(LM_adjusted)$coefficients[2,1]
+  names(Adjusted_LM_EE_BMPP)[i]<-colnames(MEs_Male_reorder)[i]
+}
+#Printing adjusted model p-values
+print(Adjusted_LM_Pval_BMPP)
+
+```
+
+## Save Adjusted model p-values into Dataframe
+```{r save adjusted model pvals}
+DEP_pvals <- unlist(Adjusted_LM_Pval_DEP)
+DBUP_DIBP_pvals <- unlist(Adjusted_LM_Pval_DBUP_DIBP)
+BCETP_pvals <- unlist(Adjusted_LM_Pval_BCETP)
+BDCPP_pvals <- unlist(Adjusted_LM_Pval_BDCPP)
+DPHP_pvals <- unlist(Adjusted_LM_Pval_DPHP)
+DPRP_pvals <- unlist(Adjusted_LM_Pval_DPRP)
+BBOEP_pvals <- unlist(Adjusted_LM_Pval_BBOEP)
+BEHP_pvals <- unlist(Adjusted_LM_Pval_BEHP)
+BCPP_pvals <- unlist(Adjusted_LM_Pval_BCPP)
+BMPP_pvals <- unlist(Adjusted_LM_Pval_BMPP)
+
+AdjustedLM_Pval_Summary <- data.frame(DEP_pvals, DBUP_DIBP_pvals, BCETP_pvals, BDCPP_pvals, DPHP_pvals, DPRP_pvals, BBOEP_pvals, BEHP_pvals, BCPP_pvals, BMPP_pvals)
+
+#Save pval summary
+#write.csv(AdjustedLM_Pval_Summary, "/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/WGCNA/Male_AdjustedLM_pval_summary_083024.csv")
+```
+
+## Save Adjusted model effect estimates into Dataframe
+```{r save adjusted model effect estimates}
+DEP_EE <- unlist(Adjusted_LM_EE_DEP)
+DBUP_DIBP_EE <- unlist(Adjusted_LM_EE_DBUP_DIBP)
+BCETP_EE <- unlist(Adjusted_LM_EE_BCETP)
+BDCPP_EE <- unlist(Adjusted_LM_EE_BDCPP)
+DPHP_EE <- unlist(Adjusted_LM_EE_DPHP)
+DPRP_EE <- unlist(Adjusted_LM_EE_DPRP)
+BBOEP_EE <- unlist(Adjusted_LM_EE_BBOEP)
+BEHP_EE <- unlist(Adjusted_LM_EE_BEHP)
+BCPP_EE <- unlist(Adjusted_LM_EE_BCPP)
+BMPP_EE <- unlist(Adjusted_LM_EE_BMPP)
+
+AdjustedLM_EE_Summary <- data.frame(DEP_EE, DBUP_DIBP_EE, BCETP_EE, BDCPP_EE, DPHP_EE, DPRP_EE, BBOEP_EE, BEHP_EE, BCPP_EE, BMPP_EE)
+
+#Save effect estimate summary
+#write.csv(AdjustedLM_EE_Summary, "/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/WGCNA/Male_AdjustedLM_EE_summary_083024.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

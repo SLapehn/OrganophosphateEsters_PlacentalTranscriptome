@@ -1,0 +1,279 @@
+---
+title: "RNAseq_Processing_Filtering"
+author: "Samantha Lapehn"
+date: "2023-10-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## RNAseq Processing and Filtering for OPE Analysis
+
+This code performs processing and filtering of the CANDLE placental transcriptome for OPE project. Performing this code after processing the covariates/exposure data (most recently completed on 10/20/23) so that we can filter to only include RNAseq data has full covariates and exposures data.
+
+### Load Packages
+```{r load packages}
+library(tidyverse)
+library(edgeR)
+```
+
+### Load Data
+Load RNAseq Data and Exposure/Covariate data which may be needed for model construction
+```{r Load Data}
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CANDLE_RNAseq/candle_20200226.Rdata")
+Covariates <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanCovariates_102023.csv")
+OPE_Data <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanOPEData_102023.csv")
+
+#The OPE_Data_Select object contains only the relevant columns that we need. Continuous data for those that pass LOD threshold and binary data for those that do not pass LOD threshold. The other dataframe (OPE_Data) contains continuous and binary data regardless of LOD threshold . 
+OPE_Data_Select <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanOPEData_BinaryLogContinuous_102023.csv")
+
+```
+
+### Pull Count Data
+Using length scaled TPM values
+```{r count data}
+LS_Counts <- data.frame(candle_lengthScaledTPM$counts)
+```
+
+# Filtering
+- 1. Remove participants that don't have full covariate data
+-2. Removed Enzembl IDs with the suffix "_PAR_Y"  
+- 3. Remove non-protein coding genes
+- 4. Performed Filtering on genes with mean cpm<0  
+- 5. Removed Duplicated Genes  
+- 6. TMM Normalization 
+
+```{r filtering}
+#Original Dimensions
+dim(LS_Counts)
+dim(annot)
+
+#Remove participants that don't have full covariate data
+LS_Counts <- LS_Counts %>%
+  dplyr::select(any_of(Covariates$pathways_id))
+
+#Dimensions after filtering for full covariates
+dim(LS_Counts)
+
+#Remove Ensembl IDs with the suffix "_PAR_Y"
+LS_Counts<-LS_Counts[!grepl("_PAR_Y",rownames(LS_Counts)),]
+annot$ENSEMBL<-as.character(annot$ENSEMBL)
+annot<-annot[!grepl("_PAR_Y",annot$ENSEMBL),]
+
+#Dimsenions after "_PAR_Y" removal
+dim(LS_Counts)
+dim(annot)
+
+#get rownames of count dataset to match annot$ENSEMBL by removing the "." and 
+# everything after it
+rownames(LS_Counts)<-gsub("\\..*","",rownames(LS_Counts))
+
+#Remove non-protein coding genes
+BiotypesToKeep<-c("protein_coding")
+GenesToKeep<-NA
+for(i in 1:length(BiotypesToKeep)){
+  GenesToKeep=c(GenesToKeep,annot[which(annot$BIOTYPE==BiotypesToKeep[i]),"ENSEMBL"])
+}
+annot<-annot[which(annot$ENSEMBL%in%GenesToKeep),]
+table(annot$BIOTYPE)
+
+LS_Counts<-LS_Counts[which(rownames(LS_Counts)%in%GenesToKeep),]
+
+#Dimensions after reducing to protein-coding genes
+dim(LS_Counts)
+dim(annot)
+
+#Remove genes with low expression
+#Keep genes with average log cpm>0
+logcpm<-cpm(LS_Counts,log=T)
+
+keep<-rowMeans(logcpm)>0
+summary(keep)
+
+logcpm_filt <- logcpm[keep,]
+LS_Counts_filt<-LS_Counts[keep,]
+annot<-annot[keep,]
+
+#Plot before and after filtering out low expressing genes
+
+plot(density(logcpm),main="Before Removing low expressing genes")#,xlim=c(-10,20000))
+abline(v =0, col = "red", lty = 2)
+
+plot(density(logcpm_filt),main="After Removing low expressing genes")#,xlim=c(-10,20000))
+abline(v =0, col = "red", lty = 2)
+
+#Dimensions after low expresion filtering
+dim(LS_Counts_filt)
+dim(annot)
+dim(logcpm_filt)
+
+#Remove duplicated genes
+summary(duplicated(logcpm_filt))
+
+dupgenes<-as.character(annot[annot$ENSEMBL%in%rownames(logcpm_filt)[duplicated(logcpm_filt)],"SYMBOL"])
+dupgenes
+
+annot<-annot[-which(annot$SYMBOL%in%dupgenes),]
+logcpm_filt<-logcpm_filt[-which(duplicated(logcpm_filt)),]
+LS_Counts_filt<-LS_Counts_filt[-which(duplicated(LS_Counts_filt)),]
+
+#Dimensions after removing duplicates
+dim(LS_Counts_filt)
+dim(logcpm_filt)
+dim(annot)
+
+```
+
+### TMM Normalization
+Perform TMM normalization on filtered counts
+```{r TMM Norm}
+#Make DGEList
+Y<- DGEList(counts=LS_Counts_filt, genes = annot$SYMBOL)
+
+Y_norm<-calcNormFactors(Y,method="TMM") #This is the Default Method
+
+#Plot before and after normalization
+boxplot(cpm(Y,log=T)[,1:10], main="Before Normalization")
+
+boxplot(cpm(Y_norm,log=T)[,1:10], main="After Normalization")
+```
+
+### Fix Exposure Data to include continuous data for those that pass threshold and binary data for those that don't
+Also setting the binary OPEs to factors since they had changed to integers
+```{r fix exposure data}
+OPE_Data_Select_Ready <- OPE_Data_Select[, -1]
+rownames(OPE_Data_Select_Ready) <- OPE_Data_Select_Ready$pathways_id
+OPE_Data_Select_Ready <- OPE_Data_Select_Ready %>%
+  dplyr::select(-pathways_id)
+OPE_Data_Select_Ready$dprp_lod<-factor(OPE_Data_Select_Ready$dprp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready$bboep_lod<-factor(OPE_Data_Select_Ready$bboep_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready$behp_lod<-factor(OPE_Data_Select_Ready$behp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready$bcpp_lod<-factor(OPE_Data_Select_Ready$bcpp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready$bmpp_lod<-factor(OPE_Data_Select_Ready$bmpp_lod, levels=c("1", "0"))
+
+```
+
+### Save filtered/normalized data
+```{r save}
+#save(Y_norm, OPE_Data_Select_Ready, Covariates, annot, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_102023.RData")
+```
+
+### Quality Control: Principle Components Analysis
+Performing a PCA and then testing association of covariates with PCs
+```{r Principal Components}
+logcpm_Final <- cpm(LS_Counts_filt, log=TRUE)
+PCobj =prcomp(t(logcpm_Final), scale=TRUE)
+PCs = PCobj$x
+PCs =as.data.frame(PCs[,1:10])
+
+rownames(Covariates) <- Covariates$pathways_id
+Covariates_PCs<-merge(Covariates, PCs,by='row.names')
+rownames(Covariates_PCs)<-Covariates_PCs[,1]
+Covariates_PCs<-Covariates_PCs[,-1]
+
+EVAL<-as.data.frame(matrix(NA,nrow=4,ncol=14))
+colnames(EVAL)<-c("P_SG", "P_CollectionGestage", "P_Sex", "P_MaternalAge", "P_MaternalBMI", "P_MaternalRace", "P_MaternalEducation", "P_SeqBatch", "P_LaborType", "P_DeliveryMethod", "P_Alcohol", "P_Smoking", "P_Parity", "P_Gravidity")
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~opfr_sg,data=Covariates_PCs)
+  EVAL[i,1] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~OPFR_Gestage,data=Covariates_PCs)
+  EVAL[i,2] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_c_sex,data=Covariates_PCs)
+  EVAL[i,3] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_m_delivery_age,data=Covariates_PCs)
+  EVAL[i,4] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_m_prepreg_bmi,data=Covariates_PCs)
+  EVAL[i,5] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_m_race,data=Covariates_PCs)
+  EVAL[i,6] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_m_enroll_educ,data=Covariates_PCs)
+  EVAL[i,7] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~batches,data=Covariates_PCs)
+  EVAL[i,8] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~cg_labor_type,data=Covariates_PCs)
+  EVAL[i,9] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_del_method,data=Covariates_PCs)
+  EVAL[i,10] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_m_alcohol_prenatal,data=Covariates_PCs)
+  EVAL[i,11] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~Smoking_Composite,data=Covariates_PCs)
+  EVAL[i,12] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_firstborn,data=Covariates_PCs)
+  EVAL[i,13] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:10){
+  AOV<-aov(PCs[,i]~h_gravidity,data=Covariates_PCs)
+  EVAL[i,14] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+EVAL$PropVar = summary(PCobj)$importance["Proportion of Variance", 1:10]
+
+#Coloring by Variables associated with PC1 or PC2
+#PC2 v PC1- Colored by Maternal Education
+plot(PCs$PC1,PCs$PC2,col=Covariates_PCs$h_m_enroll_educ,xlab="PC1",ylab="PC2", main="Maternal Education")
+#PC2 v PC1- Colored by Sequencing Batch
+plot(PCs$PC1,PCs$PC2,col=as.factor(Covariates_PCs$batches),xlab="PC1",ylab="PC2", main="Sequencing Batches")
+#PC2 v PC1- Colored by Smoking
+plot(PCs$PC1,PCs$PC2,col=as.factor(Covariates_PCs$Smoking_Composite),xlab="PC1",ylab="PC2", main="Smoking")
+
+#Scree Plot
+EVAL$PC <- as.numeric(rownames(EVAL))
+
+EVAL %>%
+  ggplot(aes(x=PC, y=PropVar, group=1)) +
+  geom_line()+
+  geom_point() +
+  ggtitle("Variance by PC") + 
+  ylab("Proportion of Variance") +
+  scale_x_continuous(breaks=seq(0,10, by=1))+
+  ylim(0,0.5)
+```
+
+
+
+
+
+
+
+
+
+
+
+

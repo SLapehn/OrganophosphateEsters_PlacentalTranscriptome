@@ -1,0 +1,114 @@
+---
+title: "WGCNA_TFenrichment_091924"
+author: "Samantha Lapehn"
+date: "2024-09-19"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## WGCNA TF Enrichment
+
+In this code, I will upload the enriched TFs for the modules of interest from the OPE analysis and evaluate whether any of the TFs are nuclear hormone receptors. Sept 2024 Update- fixing to reflect updated data. 
+
+### Load Packages
+```{r load packages}
+library(tidyverse)
+```
+
+### Load Data
+
+1) TF enrichment for all CANDLE WGCNA modules
+2) List of TFs that are NHRs
+
+```{r load data}
+CANDLE_WGCNA_TFenrichment <- read.csv("/Volumes/paquette_a/CANDLE_WGCNA/module_TFs/allModules_enrichedTFs.csv")
+NHR_TFs <- read.csv("/Volumes/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/NHR_TFs_GuidetoPharmacology.csv")
+```
+
+### Select modules of interest for Continuous OPEs
+```{r modules of interest-continuous OPEs}
+#Vector of modules names that are associated with a continuous OPE or QGComp mixture in a full or sex-stratified model
+MOI <- c("darkgrey", "pink", "salmon", "midnightblue", "skyblue", "yellow", "brown", "cyan", "darkred", "greenyellow", "royalblue", "white", "grey60", "sienna3")
+
+#Filtering to only include the enrichment results for the modules of interest defined above
+OPE_moduleofinterest <- CANDLE_WGCNA_TFenrichment %>%
+  dplyr::filter(enriched_in_module %in% MOI)
+
+#Filtering further to only include TFs that are nuclear hormone receptors enriched for the modules of interest defined above
+OPE_moduleofinterest_NHRs <- OPE_moduleofinterest %>%
+  dplyr::filter(TF %in% NHR_TFs$NHR) 
+
+```
+
+### Dot Plot of Enriched NHRs for Continuous OPEs
+without home module colors
+```{r NHR enrichment}
+OPE_moduleofinterest_NHRs$enriched_in_module <-as.factor(OPE_moduleofinterest_NHRs$enriched_in_module)
+summary(OPE_moduleofinterest_NHRs$enriched_in_module)
+#Make vector to order NHRs by module of enrichment
+Order <- c(rep(1, 1), rep(2, 1), rep(3,2), rep(4,2), rep(5,3), rep(6, 2), rep(7, 3), rep(8, 3), rep(9, 2), rep(10, 3), rep(11, 2))
+
+ggplot(OPE_moduleofinterest_NHRs, aes(x=enriched_in_module, y=reorder(TF, Order), fill=enriched_in_module)) + 
+  geom_point(aes(size = -log10(FisherAdjustP)), shape=21) +
+  theme_bw() + 
+  scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 5)) + 
+  xlab("Module of Enrichment") + 
+  scale_fill_manual(values=c("brown"="tan4", "cyan"="cyan","darkgrey"="darkgrey", "darkred"="red3", "midnightblue"="midnightblue", "greenyellow"="greenyellow", "pink"="pink", "salmon"="salmon", "skyblue"="skyblue", "white"="ivory2", "yellow"="yellow")) +
+  ylab("Nuclear Hormone Receptor Transcription Factor")
+
+```
+
+### Select modules of interest for Binary OPEs
+```{r modules of interest-binary OPEs}
+#Vector of modules names that are associated with a continuous OPE or QGComp mixture in a full or sex-stratified model
+MOI_Binary <- c("blue", "green", "greenyellow", "lightgreen", "pink", "salmon", "lightcyan",  "brown", "cyan", "darkorange", "magenta", "plum1", "saddlebrown", "tan", "white", "yellowgreen",  "darkturquoise", "orangered4", "steelblue", "darkmagenta", "midnightblue", "red", "turquoise", "paleturquoise", "darkolivegreen")
+
+#Filtering to only include the enrichment results for the modules of interest defined above
+OPE_moduleofinterest_binary <- CANDLE_WGCNA_TFenrichment %>%
+  dplyr::filter(enriched_in_module %in% MOI_Binary)
+
+#Filtering further to only include TFs that are nuclear hormone receptors enriched for the modules of interest defined above
+OPE_moduleofinterest_NHRs_Binary <- OPE_moduleofinterest_binary %>%
+  dplyr::filter(TF %in% NHR_TFs$NHR) 
+
+```
+
+
+### Dot Plot of Enriched NHRs for Binary OPEs
+without home module coloring
+```{r NHR enrichment Binary}
+OPE_moduleofinterest_NHRs_Binary$enriched_in_module <-as.factor(OPE_moduleofinterest_NHRs_Binary$enriched_in_module)
+summary(OPE_moduleofinterest_NHRs_Binary$enriched_in_module)
+#Make vector to order NHRs by module of enrichment
+Order_Binary <- c(rep(1, 1), rep(2, 1), rep(3,3), rep(4,3), rep(5,1), rep(6, 3), rep(7, 4), rep(8, 2), rep(9, 2), rep(10, 2), rep(11, 1), rep(12, 3), rep(13,2), rep(14,3), rep(15,1), rep(16,1), rep(17,2), rep(18,3), rep(19,3))
+
+ggplot(OPE_moduleofinterest_NHRs_Binary, aes(x=enriched_in_module, y=reorder(TF, Order_Binary), fill=enriched_in_module)) + 
+  geom_point(aes(size = -log10(FisherAdjustP)), shape=21) +
+  theme_bw() + 
+  scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 5)) + 
+  xlab("Module of Enrichment") + scale_fill_manual(values=c("brown"="tan4", "cyan"="cyan", "darkorange"="darkorange", "darkturquoise"="darkturquoise", "lightcyan"="lightcyan", "green"="forestgreen", "greenyellow"="greenyellow", "lightgreen"="lightgreen", "magenta"="magenta", "midnightblue"="midnightblue", "orangered4"="orangered4", "pink"="pink", "red"="red", "salmon"="salmon", "steelblue"="steelblue", "tan"="tan", "turquoise"="turquoise", "white"="ivory2",  "yellowgreen"="yellowgreen")) +
+  ylab("Nuclear Hormone Receptor Transcription Factor")
+
+```
+
+### Total number of enriched TFs
+```{r TF counts}
+#Total number of TFs enriched for Modules associated with Continuous OPEs
+length(unique(OPE_moduleofinterest$TF))
+
+#Total number of TFs enriched for Modules associated with Binary OPEs
+length(unique(OPE_moduleofinterest_binary$TF))
+
+#Total number of NHR TFs enriched for Modules associated with continuous OPEs
+length(unique(OPE_moduleofinterest_NHRs$TF))
+
+#Total number of NHR TFs enriched for Modules associated with binary OPEs
+length(unique(OPE_moduleofinterest_NHRs_Binary$TF))
+```
+
+

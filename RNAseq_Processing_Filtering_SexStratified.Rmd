@@ -1,0 +1,467 @@
+---
+title: "RNAseq_Processing_Filtering_SexStratified"
+author: "Samantha Lapehn"
+date: "2023-10-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## RNAseq Processing and Filtering for OPE Analysis- Sex Stratified
+
+This code performs processing and filtering of the CANDLE placental transcriptome for OPE project. Performing this code after processing the sex stratified covariates/exposure data (most recently completed on 10/23/23) so that we can filter to only include RNAseq data has full covariates and exposures data.
+
+# Load Packages
+```{r load packages}
+library(tidyverse)
+library(edgeR)
+```
+
+# Load Data
+Load RNAseq Data and Exposure/Covariate data which may be needed for model construction
+
+The OPE_Data_Select object contains only the relevant columns that we need. Continuous data for those that pass LOD threshold and binary data for those that do not pass LOD threshold. The other dataframe (OPE_Data) contains continuous and binary data regardless of LOD threshold .
+```{r Load Data}
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CANDLE_RNAseq/candle_20200226.Rdata")
+Covariates_Male <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanCovariates_Male_102323.csv")
+OPE_Data_Male <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanOPEData_Male_102323.csv")
+
+OPE_Data_Select_Male <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanOPEData_BinaryLogContinuous_Male_102323.csv")
+
+Covariates_Female <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanCovariates_Female_102323.csv")
+OPE_Data_Female <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanOPEData_Female_102323.csv")
+
+OPE_Data_Select_Female <- read.csv("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/CleanOPEData_BinaryLogContinuous_Female_102323.csv")
+```
+
+### Pull Count Data
+Using length scaled TPM values
+```{r count data}
+LS_Counts <- data.frame(candle_lengthScaledTPM$counts)
+LS_Counts_Male <- LS_Counts %>%
+  dplyr::select(any_of(Covariates_Male$pathways_id))
+
+LS_Counts_Female <- LS_Counts %>%
+  dplyr::select(any_of(Covariates_Female$pathways_id))
+  
+```
+
+### Filtering
+- 1. Remove participants that don't have full covariate data - already done in code chunk above when separating RNAseq based on Sex
+-2. Removed Enzembl IDs with the suffix "_PAR_Y"  
+- 3. Remove non-protein coding genes
+- 4. Performed Filtering on genes with mean cpm<0  
+- 5. Removed Duplicated Genes  
+- 6. TMM Normalization 
+
+```{r filtering}
+#Make seperate annot for Male and Female
+annot_Male <- annot
+annot_Female <- annot
+
+#Original Dimensions
+dim(LS_Counts_Male)
+dim(annot_Male)
+
+dim(LS_Counts_Female)
+dim(annot_Female)
+
+#Remove Ensembl IDs with the suffix "_PAR_Y"
+LS_Counts_Male<-LS_Counts_Male[!grepl("_PAR_Y",rownames(LS_Counts_Male)),]
+annot_Male$ENSEMBL<-as.character(annot_Male$ENSEMBL)
+annot_Male<-annot_Male[!grepl("_PAR_Y",annot_Male$ENSEMBL),]
+
+LS_Counts_Female<-LS_Counts_Female[!grepl("_PAR_Y",rownames(LS_Counts_Female)),]
+annot_Female$ENSEMBL<-as.character(annot_Female$ENSEMBL)
+annot_Female<-annot_Female[!grepl("_PAR_Y",annot_Female$ENSEMBL),]
+
+
+#Dimsenions after "_PAR_Y" removal
+dim(LS_Counts_Male)
+dim(annot_Male)
+
+dim(LS_Counts_Female)
+dim(annot_Female)
+
+#get rownames of count dataset to match annot$ENSEMBL by removing the "." and 
+# everything after it
+rownames(LS_Counts_Male)<-gsub("\\..*","",rownames(LS_Counts_Male))
+rownames(LS_Counts_Female)<-gsub("\\..*","",rownames(LS_Counts_Female))
+
+#Remove non-protein coding genes
+BiotypesToKeep<-c("protein_coding")
+
+GenesToKeep_Male<-NA
+for(i in 1:length(BiotypesToKeep)){
+  GenesToKeep_Male=c(GenesToKeep_Male,annot_Male[which(annot_Male$BIOTYPE==BiotypesToKeep[i]),"ENSEMBL"])
+}
+annot_Male<-annot_Male[which(annot_Male$ENSEMBL%in%GenesToKeep_Male),]
+table(annot_Male$BIOTYPE)
+
+LS_Counts_Male<-LS_Counts_Male[which(rownames(LS_Counts_Male)%in%GenesToKeep_Male),]
+
+GenesToKeep_Female<-NA
+for(i in 1:length(BiotypesToKeep)){
+  GenesToKeep_Female=c(GenesToKeep_Female,annot_Female[which(annot_Female$BIOTYPE==BiotypesToKeep[i]),"ENSEMBL"])
+}
+annot_Female<-annot_Female[which(annot_Female$ENSEMBL%in%GenesToKeep_Female),]
+table(annot_Female$BIOTYPE)
+
+LS_Counts_Female<-LS_Counts_Female[which(rownames(LS_Counts_Female)%in%GenesToKeep_Female),]
+
+#Dimensions after reducing to protein-coding genes
+dim(LS_Counts_Male)
+dim(annot_Male)
+
+dim(LS_Counts_Female)
+dim(annot_Female)
+
+sum(rownames(LS_Counts_Male)==annot_Male)
+sum(rownames(LS_Counts_Female)==annot_Female)
+#Remove genes with low expression
+#Keep genes with average log cpm>0
+logcpm_Male<-cpm(LS_Counts_Male,log=T)
+
+keep_Male<-rowMeans(logcpm_Male)>0
+summary(keep_Male)
+
+logcpm_filt_Male <- logcpm_Male[keep_Male,]
+LS_Counts_filt_Male<-LS_Counts_Male[keep_Male,]
+annot_Male<-annot_Male[keep_Male,]
+
+logcpm_Female<-cpm(LS_Counts_Female,log=T)
+
+keep_Female<-rowMeans(logcpm_Female)>0
+summary(keep_Female)
+
+logcpm_filt_Female <- logcpm_Female[keep_Female,]
+LS_Counts_filt_Female<-LS_Counts_Female[keep_Female,]
+annot_Female<-annot_Female[keep_Female,]
+
+#Plot before and after filtering out low expressing genes
+
+plot(density(logcpm_Male),main="Male-Before Removing low expressing genes")#,xlim=c(-10,20000))
+abline(v =0, col = "red", lty = 2)
+
+plot(density(logcpm_filt_Male),main="Male-After Removing low expressing genes")#,xlim=c(-10,20000))
+abline(v =0, col = "red", lty = 2)
+
+plot(density(logcpm_Female),main="Female-Before Removing low expressing genes")#,xlim=c(-10,20000))
+abline(v =0, col = "red", lty = 2)
+
+plot(density(logcpm_filt_Female),main="Female-After Removing low expressing genes")#,xlim=c(-10,20000))
+abline(v =0, col = "red", lty = 2)
+
+#Dimensions after low expresion filtering
+dim(LS_Counts_filt_Male)
+dim(annot_Male)
+dim(logcpm_filt_Male)
+
+dim(LS_Counts_filt_Female)
+dim(annot_Female)
+dim(logcpm_filt_Female)
+
+sum(rownames(LS_Counts_filt_Male)==annot_Male)
+sum(rownames(LS_Counts_filt_Female)==annot_Female)
+
+#Remove duplicated genes
+summary(duplicated(logcpm_filt_Male))
+summary(duplicated(logcpm_filt_Female))
+
+dupgenes_Male<-as.character(annot_Male[annot_Male$ENSEMBL%in%rownames(logcpm_filt_Male)[duplicated(logcpm_filt_Male)],"ENSEMBL"])
+dupgenes_Male
+dupgenes_Female<-as.character(annot_Female[annot_Female$ENSEMBL%in%rownames(logcpm_filt_Female)[duplicated(logcpm_filt_Female)],"ENSEMBL"])
+dupgenes_Female
+
+annot_Male<-annot_Male[-which(annot_Male$ENSEMBL%in%dupgenes_Male),]
+logcpm_filt_Male<-logcpm_filt_Male[-which(duplicated(logcpm_filt_Male)),]
+LS_Counts_filt_Male<-LS_Counts_filt_Male[-which(duplicated(LS_Counts_filt_Male)),]
+
+annot_Female<-annot_Female[-which(annot_Female$ENSEMBL%in%dupgenes_Female),]
+logcpm_filt_Female<-logcpm_filt_Female[-which(duplicated(logcpm_filt_Female)),]
+LS_Counts_filt_Female<-LS_Counts_filt_Female[-which(duplicated(LS_Counts_filt_Female)),]
+
+#Dimensions after removing duplicates
+dim(LS_Counts_filt_Male)
+dim(annot_Male)
+dim(logcpm_filt_Male)
+
+dim(LS_Counts_filt_Female)
+dim(annot_Female)
+dim(logcpm_filt_Female)
+
+sum(rownames(LS_Counts_filt_Male)==annot_Male)
+sum(rownames(LS_Counts_filt_Female)==annot_Female)
+
+```
+
+### TMM Normalization
+Perform TMM normalization on filtered counts
+```{r TMM Norm}
+#Make DGEList
+Y_Male<- DGEList(counts=LS_Counts_filt_Male, genes = annot_Male$SYMBOL)
+
+Y_norm_Male<-calcNormFactors(Y_Male,method="TMM") #This is the Default Method
+
+Y_Female<- DGEList(counts=LS_Counts_filt_Female, genes = annot_Female$SYMBOL)
+
+Y_norm_Female<-calcNormFactors(Y_Female,method="TMM") #This is the Default Method
+
+#Plot before and after normalization
+boxplot(cpm(Y_Male,log=T)[,1:10], main="Male-Before Normalization")
+
+boxplot(cpm(Y_norm_Male,log=T)[,1:10], main="Male-After Normalization")
+
+boxplot(cpm(Y_Female,log=T)[,1:10], main="Female-Before Normalization")
+
+boxplot(cpm(Y_norm_Female,log=T)[,1:10], main="Female-After Normalization")
+```
+### Fix Exposure Data to include continuous data for those that pass threshold and binary data for those that don't
+Also setting the binary OPEs to factors since they had changed to integers
+```{r fix exposure data}
+OPE_Data_Select_Ready_Male <- OPE_Data_Select_Male[, -1]
+rownames(OPE_Data_Select_Ready_Male) <- OPE_Data_Select_Ready_Male$pathways_id
+OPE_Data_Select_Ready_Male <- OPE_Data_Select_Ready_Male %>%
+  dplyr::select(-pathways_id)
+OPE_Data_Select_Ready_Male$dprp_lod<-factor(OPE_Data_Select_Ready_Male$dprp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready_Male$bboep_lod<-factor(OPE_Data_Select_Ready_Male$bboep_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready_Male$behp_lod<-factor(OPE_Data_Select_Ready_Male$behp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready_Male$bcpp_lod<-factor(OPE_Data_Select_Ready_Male$bcpp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready_Male$bmpp_lod<-factor(OPE_Data_Select_Ready_Male$bmpp_lod, levels=c("1", "0"))
+
+OPE_Data_Select_Ready_Female <- OPE_Data_Select_Female[, -1]
+rownames(OPE_Data_Select_Ready_Female) <- OPE_Data_Select_Ready_Female$pathways_id
+OPE_Data_Select_Ready_Female <- OPE_Data_Select_Ready_Female %>%
+  dplyr::select(-pathways_id)
+OPE_Data_Select_Ready_Female$dprp_lod<-factor(OPE_Data_Select_Ready_Female$dprp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready_Female$bboep_lod<-factor(OPE_Data_Select_Ready_Female$bboep_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready_Female$behp_lod<-factor(OPE_Data_Select_Ready_Female$behp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready_Female$bcpp_lod<-factor(OPE_Data_Select_Ready_Female$bcpp_lod, levels=c("1", "0"))
+OPE_Data_Select_Ready_Female$bmpp_lod<-factor(OPE_Data_Select_Ready_Female$bmpp_lod, levels=c("1", "0"))
+
+```
+
+### Save filtered/normalized data
+```{r save}
+#save(Y_norm_Male, OPE_Data_Select_Ready_Male, Covariates_Male, annot_Male, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_Male_102323.RData")
+
+#save(Y_norm_Female, OPE_Data_Select_Ready_Female, Covariates_Female, annot_Female, file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Data/FilteredNormalizedData_Female_102323.RData")
+```
+
+### Quality Control: Principle Components Analysis - Male
+Performing a PCA and then testing association of covariates with PCs
+```{r Principal Components}
+logcpm_Final_Male <- cpm(LS_Counts_filt_Male, log=TRUE)
+PCobj_Male =prcomp(t(logcpm_Final_Male), scale=TRUE)
+PCs_Male = PCobj_Male$x
+PCs_Male =as.data.frame(PCs_Male[,1:50])
+
+rownames(Covariates_Male) <- Covariates_Male$pathways_id
+Covariates_PCs_Male<-merge(Covariates_Male, PCs_Male,by='row.names')
+rownames(Covariates_PCs_Male)<-Covariates_PCs_Male[,1]
+Covariates_PCs_Male<-Covariates_PCs_Male[,-1]
+
+EVAL_Male<-as.data.frame(matrix(NA,nrow=4,ncol=13))
+colnames(EVAL_Male)<-c("P_SG", "P_CollectionGestage", "P_MaternalAge", "P_MaternalBMI", "P_MaternalRace", "P_MaternalEducation", "P_Batch", "P_LaborType", "P_DeliveryMethod", "P_Alcohol", "P_Smoking", "P_Parity", "P_Gravidity")
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~opfr_sg,data=Covariates_PCs_Male)
+  EVAL_Male[i,1] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~OPFR_Gestage,data=Covariates_PCs_Male)
+  EVAL_Male[i,2] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~h_m_delivery_age,data=Covariates_PCs_Male)
+  EVAL_Male[i,3] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~h_m_prepreg_bmi,data=Covariates_PCs_Male)
+  EVAL_Male[i,4] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~h_m_race,data=Covariates_PCs_Male)
+  EVAL_Male[i,5] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~h_m_enroll_educ,data=Covariates_PCs_Male)
+  EVAL_Male[i,6] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~batches,data=Covariates_PCs_Male)
+  EVAL_Male[i,7] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~cg_labor_type,data=Covariates_PCs_Male)
+  EVAL_Male[i,8] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~h_del_method,data=Covariates_PCs_Male)
+  EVAL_Male[i,9] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~h_m_alcohol_prenatal,data=Covariates_PCs_Male)
+  EVAL_Male[i,10] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~Smoking_Composite,data=Covariates_PCs_Male)
+  EVAL_Male[i,11] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~h_firstborn,data=Covariates_PCs_Male)
+  EVAL_Male[i,12] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Male[,i]~h_gravidity,data=Covariates_PCs_Male)
+  EVAL_Male[i,13] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+EVAL_Male$PropVar = summary(PCobj_Male)$importance["Proportion of Variance", 1:50]
+
+#Coloring by Variables associated with PC1 or PC2
+#PC2 v PC1- Colored by Smoking
+plot(PCs_Male$PC1,PCs_Male$PC2,col=as.factor(Covariates_PCs_Male$Smoking_Composite),xlab="PC1",ylab="PC2", main="Maternal Smoking")
+#PC2 v PC1- Colored by Maternal Education
+plot(PCs_Male$PC1,PCs_Male$PC2,col=Covariates_PCs_Male$h_m_enroll_educ,xlab="PC1",ylab="PC2", main="Maternal Education")
+#PC2 v PC1- Colored by Sequencing Batch
+plot(PCs_Male$PC1,PCs_Male$PC2,col=as.factor(Covariates_PCs_Male$batches),xlab="PC1",ylab="PC2", main="Sequencing Batches")
+
+#Scree Plot
+EVAL_Male$PC <- as.numeric(rownames(EVAL_Male))
+
+EVAL_Male %>%
+  ggplot(aes(x=PC, y=PropVar, group=1)) +
+  geom_line()+
+  geom_point() +
+  ggtitle("Variance by PC") + 
+  ylab("Proportion of Variance") +
+  scale_x_continuous(breaks=seq(0,50, by=1))+
+  ylim(0,0.5)
+```
+
+### Quality Control: Principle Components Analysis - Female
+Performing a PCA and then testing association of covariates with PCs
+```{r Principal Components Female}
+logcpm_Final_Female <- cpm(LS_Counts_filt_Female, log=TRUE)
+PCobj_Female =prcomp(t(logcpm_Final_Female), scale=TRUE)
+PCs_Female = PCobj_Female$x
+PCs_Female =as.data.frame(PCs_Female[,1:50])
+
+rownames(Covariates_Female) <- Covariates_Female$pathways_id
+Covariates_PCs_Female<-merge(Covariates_Female, PCs_Female,by='row.names')
+rownames(Covariates_PCs_Female)<-Covariates_PCs_Female[,1]
+Covariates_PCs_Female<-Covariates_PCs_Female[,-1]
+
+EVAL_Female<-as.data.frame(matrix(NA,nrow=4,ncol=13))
+colnames(EVAL_Female)<-c("P_SG", "P_CollectionGestage", "P_MaternalAge", "P_MaternalBMI", "P_MaternalRace", "P_MaternalEducation", "P_SBatch", "P_LaborType", "P_DeliveryMethod", "P_Alcohol", "P_Smoking", "P_Parity", "P_Gravidity")
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~opfr_sg,data=Covariates_PCs_Female)
+  EVAL_Female[i,1] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~OPFR_Gestage,data=Covariates_PCs_Female)
+  EVAL_Female[i,2] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~h_m_delivery_age,data=Covariates_PCs_Female)
+  EVAL_Female[i,3] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~h_m_prepreg_bmi,data=Covariates_PCs_Female)
+  EVAL_Female[i,4] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~h_m_race,data=Covariates_PCs_Female)
+  EVAL_Female[i,5] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~h_m_enroll_educ,data=Covariates_PCs_Female)
+  EVAL_Female[i,6] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~batches,data=Covariates_PCs_Female)
+  EVAL_Female[i,7] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~cg_labor_type,data=Covariates_PCs_Female)
+  EVAL_Female[i,8] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~h_del_method,data=Covariates_PCs_Female)
+  EVAL_Female[i,9] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~h_m_alcohol_prenatal,data=Covariates_PCs_Female)
+  EVAL_Female[i,10] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~Smoking_Composite,data=Covariates_PCs_Female)
+  EVAL_Female[i,11] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~h_firstborn,data=Covariates_PCs_Female)
+  EVAL_Female[i,12] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+for (i in 1:50){
+  AOV<-aov(PCs_Female[,i]~h_gravidity,data=Covariates_PCs_Female)
+  EVAL_Female[i,13] <-summary(AOV)[[1]][["Pr(>F)"]][1]
+}
+
+EVAL_Female$PropVar = summary(PCobj_Female)$importance["Proportion of Variance", 1:50]
+
+#Coloring by Variables associated with PC1 or PC2
+#PC2 v PC1- Colored by Maternal Age
+plot(PCs_Female$PC1,PCs_Female$PC2,col=Covariates_PCs_Female$h_m_delivery_age,xlab="PC1",ylab="PC2", main="Maternal Age")
+#PC2 v PC1- Colored by Labor Type
+plot(PCs_Female$PC1,PCs_Female$PC2,col=as.factor(Covariates_PCs_Female$cg_labor_type),xlab="PC1",ylab="PC2", main="Labor Type")
+#PC2 v PC1- Colored by Labor Type
+plot(PCs_Female$PC1,PCs_Female$PC2,col=as.factor(Covariates_PCs_Female$batches),xlab="PC1",ylab="PC2", main="Batch")
+
+#Scree Plot
+EVAL_Female$PC <- as.numeric(rownames(EVAL_Female))
+
+EVAL_Female %>%
+  ggplot(aes(x=PC, y=PropVar, group=1)) +
+  geom_line()+
+  geom_point() +
+  ggtitle("Variance by PC") + 
+  ylab("Proportion of Variance") +
+  scale_x_continuous(breaks=seq(0,50, by=1))+
+  ylim(0,0.5)
+```
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,75 @@
+---
+title: "Interpret_QGComp_110223_WGCNAResults"
+author: "Samantha Lapehn"
+date: "2023-11-03"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Interpret WGCNA Bootstrap QGComp Results from 110123
+This code will be used to interpret and visualize the WGCNA bootstrapped QGComp results. This analysis used the CANDLE WGCNA modules and the CANDLE OPE data for the 5 OPEs with >70% above LOD. 
+
+### Load Packages
+```{r packages}
+library(tidyverse)
+library(qgcomp)
+library(data.table)
+library(edgeR)
+
+source("/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/EWAS_QGComp Code from Dennis/EWAS_QGComp_Functions_Update3.R")
+```
+
+### Load QGComp BS Results object for WGCNA
+```{r load BS}
+load(file="/active/paquette_a/slapehn/OPE_and_PlacentalTranscriptome/Results/EWAS_QGComp/BoostrapResults_WGCNA_110123.RData")
+```
+
+### Pull Bootstrap Results
+```{r pull results BS}
+Results_BS <- ewas_qgcomp_fit.boot$results 
+
+Results_BS$FDR<-p.adjust(Results_BS$pval, method="BH", n=length(Results_BS$pval))
+Results_BS$Bonferroni <- p.adjust(Results_BS$pval, method="bonferroni", n=length(Results_BS$pval))
+
+Results_BS_Sig <- Results_BS %>%
+  dplyr::filter(pval<0.05)
+
+#Significant Modules (p<0.05)
+print(Results_BS_Sig$probeID)
+
+```
+
+### Pull Component Effects
+```{r comp effects BS}
+comp_effects_BS <- ewas_qgcomp_fit.boot$component_effects
+
+#Filter for significant modules
+
+comp_effects_BS_sig <- comp_effects_BS %>%
+  dplyr::filter(probeID %in% c("MEgreenyellow"))
+
+comp_effects_BS_greenyellow <- comp_effects_BS %>%
+  dplyr::filter(probeID == "MEgreenyellow")
+comp_effects_BS_greenyellow$OPE <- c("DEP", "DBUP & DIBP", "BCETP", "BDCPP", "DPHP")
+```
+
+### Plot Sig Module Component Effect Weights
+The sum of all individual component effect sizes will sum to the overall mixture effect.
+```{r plot CE}
+ggplot(comp_effects_BS_greenyellow, aes(x=OPE, y=weight, fill=OPE)) + 
+  geom_bar(stat="identity") + 
+  theme_bw() + 
+  scale_y_continuous(limits = c(-0.005, 0.005)) + 
+  geom_hline(yintercept = 0) + 
+  coord_flip() + 
+  ggtitle("Component Weights-GreenYellow (N=737)")
+
+# Sum overall mixture effects
+sum(comp_effects_BS_greenyellow$weight)
+
+```
